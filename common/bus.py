@@ -89,7 +89,21 @@ class Worker:
         self.handler = handler
         self.consumer = consumer or config.CONSUMER_NAME
         self.block_ms = block_ms
-        ensure_group(r, stream, group)
+        self._wait_for_group()
+
+    def _wait_for_group(self) -> None:
+        """Create the consumer group, waiting for Redis if it isn't accepting connections yet
+        (pods can start before the Redis StatefulSet is ready)."""
+        delay = 0.5
+        while True:
+            try:
+                ensure_group(self.r, self.stream, self.group)
+                return
+            except (redis.ConnectionError, redis.TimeoutError) as e:
+                log.warning("waiting for redis (%s); retrying in %.1fs", e, delay)
+                _touch_health()  # waiting is alive: don't let the liveness probe restart us
+                time.sleep(delay)
+                delay = min(delay * 2, 10.0)
 
     def _deliveries(self, msg_id: str) -> int:
         info = self.r.xpending_range(self.stream, self.group, min=msg_id, max=msg_id, count=1)
@@ -118,6 +132,17 @@ class Worker:
     def poll_once(self) -> int:
         """Process at most one batch. Returns the number of messages handled."""
         _touch_health()
+        try:
+            return self._poll()
+        except redis.ResponseError as e:
+            if "NOGROUP" not in str(e):
+                raise
+            # Stream or group vanished (e.g. Redis restarted without persistence): recreate it.
+            log.warning("consumer group %s missing on %s; recreating", self.group, self.stream)
+            ensure_group(self.r, self.stream, self.group)
+            return 0
+
+    def _poll(self) -> int:
         handled = 0
         # Reclaim messages stuck with dead or failed consumers first.
         claimed = self.r.xautoclaim(self.stream, self.group, self.consumer,

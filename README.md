@@ -94,7 +94,7 @@ curl localhost:8000/queues                     # per-agent lag / pending / consu
 ## Testing
 
 ```bash
-python -m pytest -q                                      # 81 unit + integration tests
+python -m pytest -q                                      # 85 unit + integration tests
 python scripts/run_e2e.py --repeats 3                    # live end-to-end regression
 python scripts/resilience_test.py --stop ... --start ... # agent-outage drill
 ```

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import time
 
+import redis
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
@@ -27,9 +28,20 @@ class AuditRequest(BaseModel):
     fiscal_year: int | None = Field(default=None, ge=2009, le=2100)
 
 
+@app.get("/livez")
+def livez():
+    """Liveness: the process is serving. Deliberately ignores Redis; restarting the
+    gateway can't fix a Redis outage."""
+    return {"ok": True}
+
+
 @app.get("/healthz")
 def healthz():
-    r().ping()
+    """Readiness: Redis is reachable, so requests can be queued."""
+    try:
+        r().ping()
+    except (redis.ConnectionError, redis.TimeoutError) as e:
+        raise HTTPException(503, f"redis unavailable: {e}")
     return {"ok": True}
 
 

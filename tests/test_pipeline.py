@@ -137,6 +137,62 @@ def test_terminal_status_is_never_overwritten(env):
     assert env.r.hget(bus.job_key("j1"), "status") == "completed"
 
 
+class FlakyRedis(fakeredis.FakeRedis):
+    """Refuses connections for the first N commands, like Redis still starting up."""
+
+    def __init__(self, *a, down_for=2, **kw):
+        super().__init__(*a, **kw)
+        self.down_for = down_for
+
+    def execute_command(self, *args, **kw):
+        if self.down_for > 0:
+            self.down_for -= 1
+            import redis
+            raise redis.ConnectionError("Connection refused")
+        return super().execute_command(*args, **kw)
+
+
+def test_worker_waits_for_redis_at_startup(monkeypatch):
+    """Regression: agent pods crashed on cold start because Redis wasn't accepting connections yet."""
+    monkeypatch.setattr(bus.time, "sleep", lambda s: None)
+    r = FlakyRedis(decode_responses=True, down_for=2)
+    w = bus.Worker(r, "audit:test", "testers", lambda m: None, "t-0", 10)
+    assert w.r.xinfo_groups("audit:test")[0]["name"] == "testers"
+
+
+def test_worker_heartbeats_while_waiting_for_redis(monkeypatch, tmp_path):
+    """Regression: k8s liveness killed agents that were waiting for Redis at startup, because the
+    heartbeat file was only touched while polling. Waiting is alive; a restart can't fix it."""
+    health = tmp_path / "healthy"
+    monkeypatch.setattr(config, "HEALTH_FILE", str(health))
+    beats = []
+    monkeypatch.setattr(bus.time, "sleep", lambda s: beats.append(health.exists()))
+    bus.Worker(FlakyRedis(decode_responses=True, down_for=3), "audit:test", "testers", lambda m: None, "t-0", 10)
+    assert beats == [True, True, True]
+
+
+def test_worker_recreates_lost_consumer_group(env):
+    """If Redis loses the stream/group (e.g. restart without persistence), polling recovers."""
+    worker = env.workers[0]
+    env.r.delete(config.STREAM_CROSSCHECK)
+    worker.poll_once()  # must not raise NOGROUP
+    job = env.client.post("/audits", json={"ticker": "SYN"}).json()
+    env.drain()
+    assert env.client.get(f"/audits/{job['job_id']}").json()["status"] == "completed"
+
+
+def test_liveness_does_not_depend_on_redis(env, monkeypatch):
+    """Regression: the gateway's liveness probe pinged Redis, so a Redis outage made k8s restart a healthy
+    gateway. Liveness must reflect only the process; readiness reports the dependency."""
+    import redis
+
+    def down():
+        raise redis.ConnectionError("Connection refused")
+    monkeypatch.setattr(env.r, "ping", down)
+    assert env.client.get("/livez").status_code == 200
+    assert env.client.get("/healthz").status_code == 503
+
+
 def test_gateway_validates_input(env):
     assert env.client.post("/audits", json={"ticker": "AAPL; DROP"}).status_code == 422
     assert env.client.post("/audits", json={"ticker": "AAPL", "fiscal_year": 1990}).status_code == 422
