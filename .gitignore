@@ -6,3 +6,5 @@ logs/
 e2e-results/
 data/index/
 .env
+data/private/
+data/index_in/

@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 CLUSTER=${CLUSTER:-compliance-audit}
-AGENTS="gateway crosscheck regulation reporter"
+AGENTS="gateway crosscheck document regulation reporter"
 
 kind get clusters | grep -qx "$CLUSTER" || kind create cluster --name "$CLUSTER" --config k8s/kind-config.yaml
 

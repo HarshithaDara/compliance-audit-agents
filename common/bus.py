@@ -78,6 +78,20 @@ def _touch_health() -> None:
         pass
 
 
+_active: tuple["Worker", str] | None = None
+
+
+def keepalive() -> None:
+    """For handlers that run for minutes (OCR over a long PDF): proves the pod is alive to the
+    liveness probe and resets the message's idle time so XAUTOCLAIM on another replica does not
+    take over a job that is still making progress. Cheap enough to call once per page."""
+    _touch_health()
+    if _active is not None:
+        worker, msg_id = _active
+        worker.r.xclaim(worker.stream, worker.group, worker.consumer, min_idle_time=0, message_ids=[msg_id],
+                        justid=True)
+
+
 class Worker:
     """Consumer-group worker loop for one agent role."""
 
@@ -117,6 +131,8 @@ class Worker:
             self.r.xadd(config.STREAM_DLQ, {"stream": self.stream, "data": json.dumps(fields), "error": "malformed"})
             self.r.xack(self.stream, self.group, msg_id)
             return
+        global _active
+        _active = (self, msg_id)
         try:
             self.handler(msg)
             self.r.xack(self.stream, self.group, msg_id)
@@ -128,6 +144,8 @@ class Worker:
                 set_status(self.r, msg.job_id, "failed", failed_in=self.group, error=repr(e)[:500])
                 self.r.xack(self.stream, self.group, msg_id)
             # otherwise leave it pending; it is retried via XAUTOCLAIM after CLAIM_IDLE_MS
+        finally:
+            _active = None
 
     def poll_once(self) -> int:
         """Process at most one batch. Returns the number of messages handled."""

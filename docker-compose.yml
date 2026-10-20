@@ -23,6 +23,16 @@ services:
     build: {context: ., dockerfile: agents/crosscheck/Dockerfile}
     image: audit-crosscheck:local
     deploy: {replicas: 2}
+  document:
+    <<: *agent
+    build: {context: ., dockerfile: agents/document/Dockerfile}
+    image: audit-document:local
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Ollama on the host (start it with OLLAMA_HOST=0.0.0.0); unreachable means rules-only reading.
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+    extra_hosts: ["host.docker.internal:host-gateway"]
   regulation:
     <<: *agent
     build: {context: ., dockerfile: agents/regulation/Dockerfile}

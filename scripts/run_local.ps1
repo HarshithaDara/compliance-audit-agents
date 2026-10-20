@@ -24,6 +24,7 @@ $env:HEALTH_FILE = Join-Path $logs "healthy"
 $procs = @(
     @{ name = "crosscheck-1"; args = @("-m", "agents.crosscheck.agent") },
     @{ name = "crosscheck-2"; args = @("-m", "agents.crosscheck.agent") },
+    @{ name = "document-1"; args = @("-m", "agents.document.agent") },
     @{ name = "regulation-1"; args = @("-m", "agents.regulation.agent") },
     @{ name = "reporter-1";   args = @("-m", "agents.reporter.agent") },
     @{ name = "gateway-1";    args = @("-m", "uvicorn", "agents.gateway.app:app", "--port", "8000") }

@@ -20,6 +20,9 @@ from rank_bm25 import BM25Okapi
 ROOT = Path(__file__).resolve().parents[2]
 CORPUS = Path(os.getenv("REG_CORPUS", ROOT / "data" / "regulations.jsonl"))
 INDEX_DIR = Path(os.getenv("REG_INDEX_DIR", ROOT / "data" / "index"))
+# Indian income-tax / GST corpus for document audits (scraper/scrape_india_tax.py).
+IN_CORPUS = Path(os.getenv("REG_CORPUS_IN", ROOT / "data" / "regulations_in.jsonl"))
+IN_INDEX_DIR = Path(os.getenv("REG_INDEX_DIR_IN", ROOT / "data" / "index_in"))
 EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 MODE = os.getenv("RETRIEVER_MODE", "hybrid")  # hybrid | bm25
 
@@ -125,10 +128,11 @@ class Hit:
 
 
 class Retriever:
-    def __init__(self, index_dir: Path = INDEX_DIR, mode: str = MODE):
+    def __init__(self, index_dir: Path = INDEX_DIR, mode: str = MODE, corpus: Path | None = None):
+        corpus = corpus or (IN_CORPUS if index_dir == IN_INDEX_DIR else CORPUS)
         chunk_file = index_dir / "chunks.jsonl"
         if not chunk_file.exists():
-            build_index(out=index_dir, dense=(mode == "hybrid"))
+            build_index(corpus, out=index_dir, dense=(mode == "hybrid"))
         self.chunks = [Chunk(**json.loads(line)) for line in chunk_file.open(encoding="utf-8")]
         self.bm25 = BM25Okapi([tokenize(f"{c.heading} {c.text}") for c in self.chunks])
         self.mode = mode
@@ -137,7 +141,7 @@ class Retriever:
         if mode == "hybrid":
             emb = index_dir / "embeddings.npy"
             if not emb.exists():
-                build_index(out=index_dir, dense=True)
+                build_index(corpus, out=index_dir, dense=True)
             self.vecs = np.load(emb)
             self.model = _embedder()
         self.by_section: dict[str, list[Chunk]] = {}
@@ -165,6 +169,13 @@ class Retriever:
             out.append("232.405")
         if re.search(r"\bForm 10-K\b", query) and "249.310" in self.by_section:
             out.append("249.310")
+        # Indian corpus: "section 44AD" -> ITA-44AD; with "CGST" in the query, "section 39" -> CGST-39.
+        act = "CGST" if re.search(r"\bCGST\b", query) else "ITA"
+        for sec in re.findall(r"\bsection (\d{1,3}[A-Z]{0,4})\b", query, re.IGNORECASE):
+            for key in (f"{act}-{sec}", f"ITA-{sec}"):
+                if key in self.by_section:
+                    out.append(key)
+                    break
         return list(dict.fromkeys(out))
 
     def search(self, query: str, k: int = 3, candidates: int = 40, industry: str = "general") -> list[Hit]:
@@ -218,6 +229,9 @@ if __name__ == "__main__":
     import sys
     n = build_index(dense=(MODE == "hybrid"))
     print(f"indexed {n} chunks -> {INDEX_DIR}")
+    if IN_CORPUS.exists():
+        n = build_index(IN_CORPUS, IN_INDEX_DIR, dense=(MODE == "hybrid"))
+        print(f"indexed {n} chunks -> {IN_INDEX_DIR}")
     if len(sys.argv) > 1:
         for h in Retriever().search(" ".join(sys.argv[1:])):
             print(h.score, h.dense, h.citation, h.heading)

@@ -1,0 +1,36 @@
+# Reads uploaded PDFs (OCR for scanned pages) and cross-checks the extracted figures.
+# Long documents take minutes; the agent calls bus.keepalive() per page, which refreshes the
+# liveness file and the message's idle time so another replica does not reclaim the job.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: document
+  labels: {app: document}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: document}
+  template:
+    metadata:
+      labels: {app: document, app.kubernetes.io/component: agent}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: document
+          image: audit-document:latest
+          imagePullPolicy: IfNotPresent
+          envFrom: [{configMapRef: {name: audit-config}}]
+          env:  # used only for documents whose uploader chose the Claude reader
+            - name: ANTHROPIC_API_KEY
+              valueFrom: {secretKeyRef: {name: anthropic, key: api-key, optional: true}}
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import os,sys,time; sys.exit(time.time()-os.path.getmtime('/tmp/agent-healthy')>120)"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 250m, memory: 384Mi}
+            limits: {memory: 1536Mi}  # page rendering for OCR plus the ONNX model
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]

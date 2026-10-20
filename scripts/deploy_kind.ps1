@@ -5,7 +5,7 @@
 # errors under $ErrorActionPreference = "Stop" when output is redirected, so check exit codes instead.
 Set-Location (Split-Path -Parent $PSScriptRoot)
 $cluster = if ($env:CLUSTER) { $env:CLUSTER } else { "compliance-audit" }
-$agents = "gateway", "crosscheck", "regulation", "reporter"
+$agents = "gateway", "crosscheck", "document", "regulation", "reporter"
 
 function Invoke-Checked([string]$What, [scriptblock]$Command) {
     & $Command

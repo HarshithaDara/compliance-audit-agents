@@ -48,10 +48,12 @@ def make_handler(r, drafter=None):
             log.info("job %s: asked regulation agent to refine %s", msg.job_id, weak)
             return
 
-        used = drafter
+        # A confidential document is only sent to a cloud model when the uploader chose that.
+        chosen = fallback if msg.kind == "document" and not msg.document.allow_cloud else drafter
+        used = chosen
         try:
-            msg.stamp(AGENT, config.CONSUMER_NAME, f"drafting with {drafter.name}")
-            report = drafter.draft(msg)
+            msg.stamp(AGENT, config.CONSUMER_NAME, f"drafting with {chosen.name}")
+            report = chosen.draft(msg)
         except GroundingError as e:
             log.warning("job %s: draft rejected (%s); using template drafter", msg.job_id, e)
             msg.trace[-1].note += f"; rejected: {e}; fell back to template"
@@ -60,11 +62,16 @@ def make_handler(r, drafter=None):
 
         flagged = [f for f in msg.findings if f.status in (Status.WARN, Status.FAIL)]
         summary = {
-            "job_id": msg.job_id, "ticker": msg.ticker, "company": msg.company.name,
-            "fiscal_year": msg.fiscal_year, "accession": msg.company.accession,
-            "checks": len(msg.findings), "flagged": [f.check_id for f in flagged],
-            "drafter": used.name, "refinement_rounds": msg.refinement_round,
+            "job_id": msg.job_id, "kind": msg.kind, "checks": len(msg.findings),
+            "flagged": [f.check_id for f in flagged], "drafter": used.name, "refinement_rounds": msg.refinement_round,
         }
+        if msg.kind == "document":
+            d = msg.document
+            summary.update({"document": d.filename, "pages": d.pages, "ocr_pages": d.ocr_pages,
+                            "assessment_year": d.assessment_year, "form": d.form, "ai_reader": d.ai_reader_used})
+        else:
+            summary.update({"ticker": msg.ticker, "company": msg.company.name, "fiscal_year": msg.fiscal_year,
+                            "accession": msg.company.accession})
         pipe = r.pipeline()
         pipe.set(report_key(msg.job_id), report, ex=config.JOB_TTL_SECONDS)
         pipe.set(f"audit:job:{msg.job_id}:result", msg.model_dump_json(), ex=config.JOB_TTL_SECONDS)

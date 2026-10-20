@@ -7,3 +7,5 @@ data/index
 tests
 **/__pycache__
 *.pyc
+data/private
+data/index_in

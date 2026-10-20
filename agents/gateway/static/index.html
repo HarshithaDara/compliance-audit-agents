@@ -34,6 +34,11 @@
   .muted { color: var(--muted); }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
   label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+  select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+  input[type=file] { width: 280px; padding: 6px; }
+  .privacy { font-size: 13px; margin-top: 10px; }
+  .pages { font-size: 13px; padding-left: 18px; margin: 6px 0 0; }
+  .pages li { margin-bottom: 3px; }
   input { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
           border-radius: 8px; padding: 9px 11px; width: 150px; }
   input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -98,7 +103,7 @@
 <header>
   <div class="wrap">
     <h1>Compliance Audit Agents
-      <small>Three AI agents audit a company's latest SEC 10-K: numbers cross-check → regulation lookup → report</small></h1>
+      <small>AI agents audit a company's SEC 10-K, or a PDF you upload (Indian income-tax / GST bundles): read → cross-check → find the law → report</small></h1>
     <a href="/docs">API docs</a>
   </div>
 </header>
@@ -115,12 +120,29 @@
     <div class="error" id="error" role="alert"></div>
   </section>
 
+  <section class="panel">
+    <h2>Audit a document (PDF)</h2>
+    <div class="muted">For a taxpayer's evidence bundle with no ticker: ITR, AIS/TIS, GSTR-1/3B, invoices, bank statements, 194N certificates and the written submission, up to a few hundred pages. Every number in the report points to the page it came from.</div>
+    <form id="docform" class="row" autocomplete="off" style="margin-top:12px">
+      <label>PDF file <input id="docfile" type="file" accept="application/pdf,.pdf" required></label>
+      <label>AI reader
+        <select id="reader">
+          <option value="local">Local (Ollama on this computer)</option>
+          <option value="none">Off (rules only)</option>
+          <option value="claude">Claude (cloud)</option>
+        </select></label>
+      <button class="primary" id="docrun" type="submit">Audit document</button>
+    </form>
+    <div class="privacy muted" id="privacy"></div>
+    <div class="error" id="docerror" role="alert"></div>
+  </section>
+
   <section class="panel hidden" id="progress">
     <h2>Agents at work</h2>
     <div class="pipeline">
       <div class="step" data-step="queued"><b>Queued</b><span>Gateway accepted the request</span></div>
-      <div class="step" data-step="crosscheck"><b>Cross-check agent</b><span>Pulls SEC XBRL data, runs 11 checks</span></div>
-      <div class="step" data-step="regulation"><b>Regulation agent</b><span>Finds the governing SEC rules (RAG)</span></div>
+      <div class="step" data-step="crosscheck"><b id="agent2">Cross-check agent</b><span id="agent2note">Pulls SEC XBRL data, runs 11 checks</span></div>
+      <div class="step" data-step="regulation"><b>Regulation agent</b><span id="agent3note">Finds the governing SEC rules (RAG)</span></div>
       <div class="step" data-step="report"><b>Report agent</b><span>Drafts and validates the report</span></div>
     </div>
     <div id="stage-note" class="muted"></div>
@@ -142,7 +164,9 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<
 const STAGE = {
   queued: ["queued", "Waiting for a cross-check agent to pick up the job…"],
   crosschecking: ["crosscheck", "Cross-check agent is reading the 10-K data from SEC EDGAR and running the checks…"],
-  retrieving_regulations: ["regulation", "Regulation agent is searching 248 SEC regulation sections for each finding…"],
+  reading_document: ["crosscheck", "Document agent is reading every page (OCR for scanned pages; a 350-page bundle takes a few minutes)…"],
+  checking_document: ["crosscheck", "Document agent is cross-checking the return, AIS, GST returns, invoices and bank statements…"],
+  retrieving_regulations: ["regulation", "Regulation agent is looking up the governing law for each finding…"],
   refining_citations: ["regulation", "Report agent sent weakly-cited findings back to the regulation agent for a second search…"],
   drafting_report: ["report", "Report agent is drafting the report and checking every citation and number…"],
   completed: ["done", "Done."],
@@ -164,12 +188,37 @@ const CHECK_HELP = {
   FILING_TIMELINESS: "The 10-K must be filed within 60/75/90 days depending on company size.",
   LIQUIDITY: "Warning signs about the company's ability to pay its bills.",
   XBRL_CONSISTENCY: "The same fact should not be tagged with two different values.",
+  TURNOVER_AIS_VS_ITR: "Receipts the payers reported to the tax department (AIS) should match the turnover in the return.",
+  TURNOVER_GST_VS_ITR: "Turnover in the GST returns should match the income-tax return, or the difference be explained.",
+  GSTR1_VS_GSTR3B: "Sales reported in GSTR-1 should match GSTR-3B, month by month.",
+  INVOICES_VS_GSTR1: "The tax invoices should add up to what GSTR-1 reports for each month.",
+  OTHER_INCOME_OMITTED: "Interest the banks reported (AIS) should appear in the return.",
+  TDS_CREDIT: "Tax credit claimed should match the tax the payers actually deducted.",
+  TDS_HEAD: "Tax credit should be claimed under the same head as the income.",
+  PRESUMPTIVE_44AD: "The 44AD scheme needs at least 6%/8% profit, turnover under the limit, and no commission/agency income.",
+  AUDIT_44AB: "Above the turnover threshold the accounts must be audited.",
+  TAX_COMPUTATION: "The tax and the 87A rebate are recomputed from total income.",
+  LATE_FILING: "A late return needs the 234F fee and has consequences.",
+  CASH_WITHDRAWAL_194N: "Cash withdrawals above ₹1 crore attract 2% TDS unless they are certified ATM-replenishment withdrawals.",
+  BANK_STATEMENT_INTEGRITY: "The bank statement's transactions should add up to its own summary.",
+  BANK_THIRD_PARTY_CREDITS: "Money received from other parties needs its source explained.",
+  NARRATIVE_COVERAGE: "Does the written submission actually explain each problem found?",
+};
+const PRIVACY = {
+  local: "Stays on this computer: the PDF is read here and the AI runs locally in Ollama. The report is written by the local template drafter.",
+  none: "Stays on this computer: rules-only extraction, no AI model involved.",
+  claude: "Page text and findings will be sent to Anthropic's Claude API. Choose this only if you are allowed to share the document.",
 };
 
 let pollTimer = null;
 
+let docMode = false;
+
 function fmtValue(v) {
   if (v === null || v === undefined) return "—";
+  if (typeof v === "number" && docMode) {
+    return Math.abs(v) >= 1000 ? "₹" + v.toLocaleString("en-IN", {maximumFractionDigits: 2}) : String(v);
+  }
   if (typeof v === "number") {
     const a = Math.abs(v);
     if (a >= 1e9) return (v / 1e9).toLocaleString(undefined, {maximumFractionDigits: 2}) + " B";
@@ -208,6 +257,9 @@ function renderFinding(f) {
     <div class="cite"><a href="${esc(c.source_url)}" target="_blank" rel="noopener">${esc(c.citation)}</a>
       ${esc(c.heading)} <span class="muted">(relevance ${Number(c.score).toFixed(2)})</span>
       <p>${esc(c.excerpt.slice(0, 260))}…</p></div>`).join("");
+  const pages = (f.evidence || []).map((e) => `<li><b>p.${esc(e.page)}${e.printed_page && String(e.printed_page) !== String(e.page) ? " (printed " + esc(e.printed_page) + ")" : ""}</b>
+      ${esc(e.label)}${e.value !== null && e.value !== undefined ? " = " + esc(fmtValue(e.value)) : ""}
+      ${e.quote ? `<br><span class="muted">"${esc(e.quote)}"</span>` : ""}</li>`).join("");
   return `
   <details class="finding" ${f.status === "fail" || f.status === "warn" ? "open" : ""}>
     <summary>
@@ -218,14 +270,29 @@ function renderFinding(f) {
     </summary>
     <div class="body">
       <div class="muted">${esc(CHECK_HELP[f.check_id] || "")}</div>
+      ${pages ? `<div><b>Where in the document</b><ul class="pages">${pages}</ul></div>` : ""}
       ${rows ? `<table><tbody>${rows}</tbody></table>` : ""}
-      ${cites ? `<div><b>Governing SEC rules</b>${cites}</div>` : ""}
+      ${cites ? `<div><b>Governing ${docMode ? "law" : "SEC rules"}</b>${cites}</div>` : ""}
     </div>
   </details>`;
 }
 
-function renderResult(result, state) {
+function headerHtml(result) {
+  if (result.kind === "document") {
+    const d = result.document;
+    return `<div><h2>${esc(d.taxpayer || d.filename)}</h2>
+      <div class="muted">${[d.assessment_year && "AY " + d.assessment_year, d.form, d.pan_masked && "PAN " + d.pan_masked].filter(Boolean).map(esc).join(" · ")}</div>
+      <div class="muted">${esc(d.filename)} · ${esc(d.pages)} pages (${esc(d.ocr_pages)} read by OCR, ${esc(d.empty_pages)} unreadable) · AI reader: ${esc(d.ai_reader_used)}</div></div>`;
+  }
   const c = result.company;
+  return `<div><h2>${esc(c.name)} (${esc(c.ticker)})</h2>
+        <div class="muted">Form ${esc(c.form)} · fiscal year ${esc(c.fiscal_year)} · period ended ${esc(c.period_end)} · filed ${esc(c.filed)}</div>
+        <div class="muted">${c.sic_description ? "Industry: " + esc(c.sic_description) + " · " : ""}
+          <a href="${esc(c.source_url)}" target="_blank" rel="noopener">View filing on SEC.gov</a></div></div>`;
+}
+
+function renderResult(result, state) {
+  docMode = result.kind === "document";
   const fs = [...result.findings].sort((a, b) =>
     STATUS_RANK[a.status] - STATUS_RANK[b.status] || SEV_RANK[a.severity] - SEV_RANK[b.severity]);
   const count = (s) => fs.filter((f) => f.status === s).length;
@@ -235,12 +302,7 @@ function renderResult(result, state) {
     `<li><b>${esc(t.agent)}</b> <span class="muted">on pod ${esc(t.consumer)}</span>${t.note ? " · " + esc(t.note) : ""}</li>`).join("");
   $("results").innerHTML = `
   <div class="panel">
-    <div class="company">
-      <div><h2>${esc(c.name)} (${esc(c.ticker)})</h2>
-        <div class="muted">Form ${esc(c.form)} · fiscal year ${esc(c.fiscal_year)} · period ended ${esc(c.period_end)} · filed ${esc(c.filed)}</div>
-        <div class="muted">${c.sic_description ? "Industry: " + esc(c.sic_description) + " · " : ""}
-          <a href="${esc(c.source_url)}" target="_blank" rel="noopener">View filing on SEC.gov</a></div></div>
-    </div>
+    <div class="company">${headerHtml(result)}</div>
     <div class="verdict ${vClass}">Overall: ${esc(vText)}</div>
     <div class="stats">
       <div class="stat s-pass"><b>${count("pass")}</b><span>passed</span></div>
@@ -255,7 +317,7 @@ function renderResult(result, state) {
   </div>
   <div class="panel">
     <h2>Checks (${fs.length})</h2>
-    <div class="muted">Click a check to see the numbers used and the SEC rule behind it.</div>
+    <div class="muted">Click a check to see the numbers used, where they came from and the rule behind it.</div>
     ${fs.map(renderFinding).join("")}
   </div>
   <div class="panel">
@@ -268,7 +330,7 @@ function renderResult(result, state) {
     const md = await (await fetch(`/audits/${result.job_id}/report`)).text();
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([md], {type: "text/markdown"}));
-    a.download = `${c.ticker}-FY${c.fiscal_year}-audit.md`;
+    a.download = docMode ? `document-review-${result.job_id}.md` : `${result.company.ticker}-FY${result.company.fiscal_year}-audit.md`;
     a.click();
     URL.revokeObjectURL(a.href);
   };
@@ -291,7 +353,46 @@ async function poll(jobId) {
   pollTimer = setTimeout(() => poll(jobId), 500);
 }
 
-function done() { $("run").disabled = false; $("run").textContent = "Run audit"; }
+function done() {
+  $("run").disabled = false; $("run").textContent = "Run audit";
+  $("docrun").disabled = false; $("docrun").textContent = "Audit document";
+}
+
+function setPipelineLabels(doc) {
+  $("agent2").textContent = doc ? "Document agent" : "Cross-check agent";
+  $("agent2note").textContent = doc ? "Reads every page (OCR), extracts figures with page numbers, runs 15 checks"
+                                    : "Pulls SEC XBRL data, runs 11 checks";
+  $("agent3note").textContent = doc ? "Finds the Income-tax Act / CGST Act sections (RAG)" : "Finds the governing SEC rules (RAG)";
+}
+
+async function startDocument() {
+  clearTimeout(pollTimer);
+  $("docerror").textContent = "";
+  const file = $("docfile").files[0];
+  if (!file) { $("docerror").textContent = "Choose a PDF file first."; return; }
+  $("results").classList.add("hidden");
+  $("docrun").disabled = true; $("docrun").textContent = "Uploading…"; $("run").disabled = true;
+  const form = new FormData();
+  form.append("file", file);
+  form.append("ai_reader", $("reader").value);
+  try {
+    const res = await fetch("/documents", {method: "POST", body: form});
+    const data = await res.json();
+    if (!res.ok) {
+      $("docerror").textContent = Array.isArray(data.detail) ? data.detail.map((d) => d.msg).join("; ") : data.detail;
+      return done();
+    }
+    $("docrun").textContent = "Auditing…";
+    setPipelineLabels(true);
+    $("progress").classList.remove("hidden");
+    setStage("queued");
+    history.replaceState(null, "", "?job=" + encodeURIComponent(data.job_id));
+    poll(data.job_id);
+  } catch (e) {
+    $("docerror").textContent = "Could not reach the gateway: " + e.message;
+    done();
+  }
+}
 
 async function start(ticker, fy) {
   clearTimeout(pollTimer);
@@ -299,7 +400,8 @@ async function start(ticker, fy) {
   $("results").classList.add("hidden");
   const body = {ticker: ticker.trim().toUpperCase()};
   if (fy) body.fiscal_year = Number(fy);
-  $("run").disabled = true; $("run").textContent = "Running…";
+  $("run").disabled = true; $("run").textContent = "Running…"; $("docrun").disabled = true;
+  setPipelineLabels(false);
   try {
     const res = await fetch("/audits", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
     const data = await res.json();
@@ -321,7 +423,7 @@ async function start(ticker, fy) {
 async function refreshSystem() {
   try {
     const q = await (await fetch("/queues")).json();
-    const name = {"audit:crosscheck": "Cross-check agent", "audit:regulation": "Regulation agent",
+    const name = {"audit:crosscheck": "Cross-check agent", "audit:document": "Document agent", "audit:regulation": "Regulation agent",
                   "audit:report": "Report agent", "audit:dlq": "Failed messages (DLQ)"};
     $("system").innerHTML = Object.entries(q).map(([k, v]) => k === "audit:dlq"
       ? `<div><b>${name[k]}</b><br>${v.length} total</div>`
@@ -332,6 +434,10 @@ async function refreshSystem() {
 }
 
 $("form").addEventListener("submit", (e) => { e.preventDefault(); start($("ticker").value, $("fy").value); });
+$("docform").addEventListener("submit", (e) => { e.preventDefault(); startDocument(); });
+const showPrivacy = () => { $("privacy").textContent = PRIVACY[$("reader").value]; };
+$("reader").addEventListener("change", showPrivacy);
+showPrivacy();
 ["AAPL", "MSFT", "NVDA", "JPM", "TSLA", "BA", "PFE", "CVX"].forEach((t) => {
   const b = document.createElement("button");
   b.type = "button"; b.className = "chip"; b.textContent = t;
@@ -344,7 +450,7 @@ setInterval(refreshSystem, 3000);
 const params = new URLSearchParams(location.search);
 if (params.get("job")) {
   $("progress").classList.remove("hidden");
-  $("run").disabled = true;
+  $("run").disabled = true; $("docrun").disabled = true;
   poll(params.get("job"));
 } else if (params.get("ticker")) {
   $("ticker").value = params.get("ticker");

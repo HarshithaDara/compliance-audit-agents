@@ -11,6 +11,11 @@ data:
   MAX_DELIVERIES: "3"
   CLAIM_IDLE_MS: "60000"
   LOG_LEVEL: INFO
+  # Document audits. The local AI reader is Ollama; on Docker Desktop the host is reachable as
+  # host.docker.internal (start Ollama with OLLAMA_HOST=0.0.0.0). If unreachable, documents are read rules-only.
+  MAX_UPLOAD_MB: "64"
+  OLLAMA_URL: http://host.docker.internal:11434
+  OLLAMA_MODEL: qwen2.5:3b
 # The reporter reads ANTHROPIC_API_KEY from the optional secret "anthropic":
 #   kubectl -n compliance-audit create secret generic anthropic --from-literal=api-key=sk-ant-...
 # Without it, reports are drafted by the deterministic template drafter.

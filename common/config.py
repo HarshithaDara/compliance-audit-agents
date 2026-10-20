@@ -25,3 +25,13 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5")
 LLM_MODE = os.getenv("LLM_MODE", "auto")
 
 HEALTH_FILE = os.getenv("HEALTH_FILE", "/tmp/agent-healthy")
+
+# Document audits (uploaded PDFs).
+STREAM_DOCUMENT = "audit:document"
+MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "64"))
+DOC_BLOB_TTL_SECONDS = int(os.getenv("DOC_BLOB_TTL_SECONDS", "3600"))
+# AI reader for documents. "local" talks to Ollama on this machine/cluster; nothing leaves it.
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
+DOC_LLM_MAX_PAGES = int(os.getenv("DOC_LLM_MAX_PAGES", "40"))
+DOC_OCR = os.getenv("DOC_OCR", "auto")  # auto | off

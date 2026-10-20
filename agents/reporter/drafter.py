@@ -15,6 +15,8 @@ import re
 from common import config
 from common.schemas import CITATION_RE, AuditMessage, Finding, Severity, Status
 
+from agents.reporter import document_report
+
 SEVERITY_ORDER = {Severity.HIGH: 0, Severity.MEDIUM: 1, Severity.LOW: 2, Severity.INFO: 3}
 STATUS_ICON = {Status.PASS: "PASS", Status.WARN: "WARN", Status.FAIL: "FAIL", Status.NOT_APPLICABLE: "N/A"}
 
@@ -60,7 +62,9 @@ def evidence_appendix(msg: AuditMessage) -> str:
         out.append(f"*Severity: {f.severity.value}*  ")
         out.append(f.detail)
         out.append("")
-        if f.values:
+        if msg.kind == "document":
+            out += document_report.evidence_block(f)
+        elif f.values:
             out.append(_values_table(f.values))
             out.append("")
         if f.citations:
@@ -72,6 +76,8 @@ def evidence_appendix(msg: AuditMessage) -> str:
 
 
 def header(msg: AuditMessage, drafter: str) -> str:
+    if msg.kind == "document":
+        return document_report.header(msg, drafter)
     c = msg.company
     return "\n".join([
         f"# Compliance Audit Report - {c.name} ({c.ticker})",
@@ -99,24 +105,34 @@ class TemplateDrafter:
         flagged = [f for f in sorted_findings(fs) if f.status in (Status.FAIL, Status.WARN)]
         passed = [f for f in fs if f.status == Status.PASS]
         na = [f for f in fs if f.status == Status.NOT_APPLICABLE]
+        document = msg.kind == "document"
+        source = "the figures extracted from the document" if document else "the XBRL financial data"
         lines = [header(msg, self.name), "## Executive summary", "",
                  f"**Overall assessment:** {overall_rating(fs)}.", "",
-                 f"{len(fs)} automated checks were run against the XBRL financial data: {len(passed)} passed, "
-                 f"{len(flagged)} raised observations and {len(na)} were not applicable to this filer's tagging.", ""]
+                 f"{len(fs)} automated checks were run against {source}: {len(passed)} passed, "
+                 f"{len(flagged)} raised observations and {len(na)} were not applicable"
+                 f"{' (the document lacked their inputs)' if document else ' to this filer' + chr(39) + 's tagging'}.", ""]
         lines += ["## Observations", ""]
         for i, f in enumerate(flagged, 1):
             cites = ", ".join(c.citation for c in f.citations[:2]) or "no governing provision retrieved"
-            lines.append(f"{i}. **{f.title}** ({f.severity.value}, {f.status.value}). {f.detail} "
+            pages = sorted({e.page for e in f.evidence})
+            where = f" Source pages: {', '.join(map(str, pages[:10]))}{'…' if len(pages) > 10 else ''}." if pages else ""
+            lines.append(f"{i}. **{f.title}** ({f.severity.value}, {f.status.value}). {f.detail}{where} "
                          f"Relevant provisions: {cites}.")
         if not flagged:
             lines.append("No exceptions were identified by the automated checks.")
         lines += ["", "## Recommended follow-up", ""]
+        recommendations = document_report.RECOMMENDATIONS if document else RECOMMENDATIONS
         for f in flagged:
-            lines.append(f"- {RECOMMENDATIONS.get(f.check_id, 'Review the underlying disclosure with management.')}")
+            lines.append(f"- {recommendations.get(f.check_id, 'Review the underlying disclosure with management.')}")
         if not flagged:
-            lines.append("- None required from the automated checks; retain this report with the filing review file.")
+            lines.append("- None required from the automated checks; retain this report with the review file.")
         lines.append("")
-        lines += [LIMITATIONS, "", evidence_appendix(msg), "", pipeline_trace(msg)]
+        if document:
+            lines += [document_report.coverage_section(msg), document_report.LIMITATIONS]
+        else:
+            lines.append(LIMITATIONS)
+        lines += ["", evidence_appendix(msg), "", pipeline_trace(msg)]
         return "\n".join(lines)
 
 
@@ -156,6 +172,22 @@ Output GitHub-flavored markdown with exactly these sections:
 ## Recommended follow-up (bullets, one per observation)
 Do not add a title or any other sections."""
 
+DOCUMENT_SYSTEM_PROMPT = """You are the report-drafting agent in a multi-agent tax compliance review.
+Other agents have already (1) extracted figures, with page references, from a taxpayer's uploaded Indian income-tax / GST document bundle, cross-checked them, and (2) retrieved the governing provisions.
+Write the narrative sections of the review for a tax professional preparing for proceedings.
+
+Ground every statement in the evidence JSON:
+- Cite law only by the exact `citation` strings in the evidence (e.g. "Income-tax Act, 1961 s.44AD"). Never cite anything else.
+- Quote amounts only as they appear in the evidence, in rupees with Indian digit grouping (e.g. ₹12,34,567), and give the source page numbers.
+- If a check is not applicable, say so briefly rather than speculating.
+- This is an automated reviewer's checklist, not legal advice or an assessment order; don't claim otherwise.
+
+Output GitHub-flavored markdown with exactly these sections:
+## Executive summary   (overall assessment in one bolded sentence, then 2-4 sentences)
+## Observations        (one numbered item per WARN/FAIL check, most severe first: what was found with page references, why it matters, the governing provision)
+## Recommended follow-up (bullets, one per observation)
+Do not add a title or any other sections."""
+
 
 class GroundingError(ValueError):
     pass
@@ -181,6 +213,14 @@ def validate_grounding(text: str, msg: AuditMessage) -> None:
                 walk(x)
     for f in msg.findings:
         walk(f.values)
+        walk([e.value for e in f.evidence])
+    for m in re.finditer(r"₹\s?([0-9][0-9,]*(?:\.[0-9]+)?)\s*(crore|lakh)?", text):
+        value = float(m.group(1).replace(",", "")) * {"crore": 1e7, "lakh": 1e5}.get(m.group(2) or "", 1)
+        if value < 1000:
+            continue
+        tol = max(1.0, abs(value) * (0.01 if m.group(2) else 0.0005))
+        if not any(abs(abs(n) - value) <= tol for n in evidence_nums):
+            raise GroundingError(f"draft states {m.group(0).strip()}, which does not match any evidence value")
     for m in re.finditer(r"\$\s?([0-9][0-9,]*\.?[0-9]*)\s*(billion|million|B|M)\b", text):
         amount = float(m.group(1).replace(",", ""))
         scale = 1e9 if m.group(2) in ("billion", "B") else 1e6
@@ -198,10 +238,15 @@ class ClaudeDrafter:
         self.client = client or anthropic.Anthropic()
 
     def _evidence(self, msg: AuditMessage) -> str:
+        if msg.kind == "document":
+            context = {"document": msg.document.model_dump(include={"assessment_year", "form", "pages"})}
+        else:
+            context = {"company": msg.company.model_dump()}
         return json.dumps({
-            "company": msg.company.model_dump(),
+            **context,
             "findings": [{"check_id": f.check_id, "title": f.title, "status": f.status.value,
                           "severity": f.severity.value, "detail": f.detail, "values": f.values,
+                          "pages": sorted({e.page for e in f.evidence}),
                           "citations": [{"citation": c.citation, "heading": c.heading, "excerpt": c.excerpt[:400]}
                                         for c in f.citations]} for f in msg.findings],
         }, indent=1, default=str)
@@ -213,7 +258,7 @@ class ClaudeDrafter:
             output_config={"effort": "high"},
             betas=["server-side-fallback-2026-07-01"],
             fallbacks="default",
-            system=SYSTEM_PROMPT,
+            system=DOCUMENT_SYSTEM_PROMPT if msg.kind == "document" else SYSTEM_PROMPT,
             messages=[{"role": "user", "content": f"<evidence>\n{self._evidence(msg)}\n</evidence>"}],
         )
         if response.stop_reason == "refusal":
@@ -226,7 +271,11 @@ class ClaudeDrafter:
 
     def draft(self, msg: AuditMessage) -> str:
         body = self.narrative(msg)
-        return "\n".join([header(msg, self.name), body, "", LIMITATIONS, "", evidence_appendix(msg), "",
+        if msg.kind == "document":
+            tail = [document_report.coverage_section(msg), document_report.LIMITATIONS]
+        else:
+            tail = [LIMITATIONS]
+        return "\n".join([header(msg, self.name), body, "", *tail, "", evidence_appendix(msg), "",
                           pipeline_trace(msg)])
 
 

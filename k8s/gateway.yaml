@@ -17,6 +17,9 @@ spec:
           image: audit-gateway:latest
           imagePullPolicy: IfNotPresent
           envFrom: [{configMapRef: {name: audit-config}}]
+          env:  # only checked, never used here: the Claude reader is offered when a key exists
+            - name: ANTHROPIC_API_KEY
+              valueFrom: {secretKeyRef: {name: anthropic, key: api-key, optional: true}}
           ports:
             - containerPort: 8000
           readinessProbe:
@@ -26,8 +29,8 @@ spec:
             httpGet: {path: /livez, port: 8000}
             periodSeconds: 20
           resources:
-            requests: {cpu: 50m, memory: 96Mi}
-            limits: {memory: 256Mi}
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}  # holds one upload (MAX_UPLOAD_MB) while storing it
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
           volumeMounts: [{name: tmp, mountPath: /tmp}]
       volumes: [{name: tmp, emptyDir: {}}]

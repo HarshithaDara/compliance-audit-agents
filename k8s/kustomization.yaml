@@ -6,6 +6,7 @@ resources:
   - config.yaml
   - redis.yaml
   - crosscheck.yaml
+  - document.yaml
   - regulation.yaml
   - reporter.yaml
   - gateway.yaml

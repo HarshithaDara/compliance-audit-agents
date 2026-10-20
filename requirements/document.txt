@@ -1,0 +1,6 @@
+-r base.txt
+requests==2.34.2
+pypdf==6.21.1
+pypdfium2==5.14.0
+rapidocr-onnxruntime==1.4.4
+anthropic==1.15.0

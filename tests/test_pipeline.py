@@ -212,7 +212,7 @@ def test_web_ui_is_served_at_root(env):
     assert res.status_code == 200 and res.headers["content-type"].startswith("text/html")
     assert "<title>Compliance Audit Agents</title>" in res.text
     # the page only calls endpoints that exist
-    for path in ("/audits", "/queues"):
+    for path in ("/audits", "/queues", "/documents"):
         assert f'"{path}' in res.text or f"`{path}" in res.text
 
 
