@@ -94,7 +94,7 @@ curl localhost:8000/queues                     # per-agent lag / pending / consu
 ## Testing
 
 ```bash
-python -m pytest -q                                      # 80 unit + integration tests
+python -m pytest -q                                      # 81 unit + integration tests
 python scripts/run_e2e.py --repeats 3                    # live end-to-end regression
 python scripts/resilience_test.py --stop ... --start ... # agent-outage drill
 ```
@@ -109,7 +109,10 @@ python scripts/resilience_test.py --stop ... --start ... # agent-outage drill
   every job completes through all agents, every report has every section, every flagged finding has a citation,
   every citation in a report was actually retrieved, repeated runs give identical results, and bad inputs are rejected.
 - **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the unit tests, builds all four images,
-  deploys them to a kind cluster and runs the end-to-end suite against it.
+  deploys them to a kind cluster and runs the end-to-end suite against it. SEC rejects automated requests from
+  GitHub Actions IP ranges (HTTP 403), so CI seeds the agents' SEC cache with a recorded snapshot of real SEC data
+  ([`scripts/sec_snapshot.py`](scripts/sec_snapshot.py), trimmed to the concepts the checks use and verified to
+  give identical results). Runs from a normal network use live SEC data.
 
 Sample reports from the end-to-end runs are in [`docs/sample-reports/`](docs/sample-reports/).
 

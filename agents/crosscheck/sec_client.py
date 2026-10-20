@@ -62,9 +62,22 @@ class SecClient:
             if blob:
                 return json.loads(gzip.decompress(bytes.fromhex(blob)))
         data = _throttled_get(url)
-        if self.r is not None:
-            self.r.set(key, gzip.compress(json.dumps(data).encode()).hex(), ex=CACHE_TTL)
+        self._store(key, data, CACHE_TTL)
         return data
+
+    def _store(self, key: str, data: dict, ttl: int | None) -> None:
+        if self.r is not None:
+            self.r.set(key, gzip.compress(json.dumps(data).encode()).hex(), ex=ttl)
+
+    # Pre-load the cache from a recorded snapshot (CI runners can't reach SEC from cloud IPs).
+    def seed_tickers(self, data: dict, ttl: int | None = None) -> None:
+        self._store("sec:tickers", data, ttl)
+
+    def seed_facts(self, cik: str, data: dict, ttl: int | None = None) -> None:
+        self._store(f"sec:facts:{cik}", data, ttl)
+
+    def seed_submissions(self, cik: str, data: dict, ttl: int | None = None) -> None:
+        self._store(f"sec:subm:{cik}", data, ttl)
 
     def lookup_cik(self, ticker: str) -> tuple[str, str]:
         data = self._cached("sec:tickers", TICKERS_URL)
