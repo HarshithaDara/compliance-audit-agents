@@ -230,7 +230,9 @@ if __name__ == "__main__":
     n = build_index(dense=(MODE == "hybrid"))
     print(f"indexed {n} chunks -> {INDEX_DIR}")
     if IN_CORPUS.exists():
-        n = build_index(IN_CORPUS, IN_INDEX_DIR, dense=(MODE == "hybrid"))
+        # CI's tests query the Indian corpus with BM25 only, so they can skip its embeddings.
+        in_mode = os.getenv("REG_INDEX_IN_MODE", MODE)
+        n = build_index(IN_CORPUS, IN_INDEX_DIR, dense=(in_mode == "hybrid"))
         print(f"indexed {n} chunks -> {IN_INDEX_DIR}")
     if len(sys.argv) > 1:
         for h in Retriever().search(" ".join(sys.argv[1:])):
