@@ -203,6 +203,13 @@ const CHECK_HELP = {
   BANK_STATEMENT_INTEGRITY: "The bank statement's transactions should add up to its own summary.",
   BANK_THIRD_PARTY_CREDITS: "Money received from other parties needs its source explained.",
   NARRATIVE_COVERAGE: "Does the written submission actually explain each problem found?",
+  CASE_CONTEXT: "What proceeding this bundle answers, and whether the order being disputed is included.",
+  NOTICE_COMPLIANCE: "Everything the officer's notice asked for should be in the response.",
+  AO_FIGURE_RECONCILIATION: "Every figure the officer relied on should trace to a document; receipts already offered must not be added twice.",
+  YEAR_CONSISTENCY: "How this year compares with the orders and returns of other years.",
+  DEDUCTION_EVIDENCE: "Deductions claimed need payment evidence dated within the year.",
+  EVIDENCE_RELEVANCE: "Evidence dated after the year can show context but not the year's transactions.",
+  SUBMISSION_CLAIMS: "Each claim the taxpayer makes: backed by evidence in the bundle, only asserted, or contradicted.",
 };
 const PRIVACY = {
   local: "Stays on this computer: the PDF is read here and the AI runs locally in Ollama. The report is written by the local template drafter.",
@@ -229,7 +236,16 @@ function fmtValue(v) {
   return String(v);
 }
 
+function docVerdict(findings) {
+  const weak = findings.filter((f) => ["warn", "fail"].includes(f.status) && (f.values || {}).bearing === "weakens the taxpayer's case");
+  const high = weak.filter((f) => f.severity === "high");
+  if (high.length) return [`Significant weaknesses: ${high.length} high-severity point(s), ${weak.length - high.length} other(s)`, "s-fail"];
+  if (weak.length) return [`Gaps to address: ${weak.length} point(s) weaken the taxpayer's position`, "s-warn"];
+  return ["Well supported: nothing found that weakens the taxpayer's position", "s-pass"];
+}
+
 function verdict(findings) {
+  if (docMode) return docVerdict(findings);
   if (findings.some((f) => f.status === "fail" && f.severity === "high"))
     return ["Exceptions noted: material issues need follow-up", "s-fail"];
   if (findings.some((f) => ["fail", "warn"].includes(f.status) && ["high", "medium"].includes(f.severity)))
@@ -265,7 +281,7 @@ function renderFinding(f) {
     <summary>
       <span class="badge s-${esc(f.status)}">${esc(STATUS_LABEL[f.status] || f.status)}</span>
       <span><span class="title">${esc(f.title)}</span>
-        <span class="sev"> · severity ${esc(f.severity)}</span><br>
+        <span class="sev"> · severity ${esc(f.severity)}${(f.values || {}).amount_at_stake ? " · amount involved " + esc(fmtValue(f.values.amount_at_stake)) : ""}${(f.values || {}).bearing && f.status !== "not_applicable" ? " · " + esc(f.values.bearing) : ""}</span><br>
         <span class="detail">${esc(f.detail)}</span></span>
     </summary>
     <div class="body">
@@ -293,7 +309,11 @@ function headerHtml(result) {
 
 function renderResult(result, state) {
   docMode = result.kind === "document";
-  const fs = [...result.findings].sort((a, b) =>
+  if (docMode) {  // most serious first, then by money involved
+    result.findings.sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status] || SEV_RANK[a.severity] - SEV_RANK[b.severity]
+      || ((b.values || {}).amount_at_stake || 0) - ((a.values || {}).amount_at_stake || 0));
+  }
+  const fs = docMode ? [...result.findings] : [...result.findings].sort((a, b) =>
     STATUS_RANK[a.status] - STATUS_RANK[b.status] || SEV_RANK[a.severity] - SEV_RANK[b.severity]);
   const count = (s) => fs.filter((f) => f.status === s).length;
   const [vText, vClass] = verdict(fs);
@@ -360,7 +380,7 @@ function done() {
 
 function setPipelineLabels(doc) {
   $("agent2").textContent = doc ? "Document agent" : "Cross-check agent";
-  $("agent2note").textContent = doc ? "Reads every page (OCR), extracts figures with page numbers, runs 15 checks"
+  $("agent2note").textContent = doc ? "Reads every page (OCR), extracts figures with page numbers, runs 22 return and case checks"
                                     : "Pulls SEC XBRL data, runs 11 checks";
   $("agent3note").textContent = doc ? "Finds the Income-tax Act / CGST Act sections (RAG)" : "Finds the governing SEC rules (RAG)";
 }

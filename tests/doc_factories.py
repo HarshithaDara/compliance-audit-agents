@@ -280,3 +280,87 @@ def to_pdf(pages: list[str | None]) -> bytes:
 
 def bundle_pdf() -> bytes:
     return to_pdf([p.text for p in bundle()])
+
+
+# ------------------------------------------------------------------ case papers
+
+def notice_page(ay="2023-24", asks_ledger=True) -> str:
+    ledger = (" Further, you need to furnish the ledger account extract of all the persons from whom you have made "
+              "transactions." if asks_ledger else "")
+    return f"""GOVERNMENT OF INDIA
+INCOME TAX DEPARTMENT
+To, SYNTHETIC TRADER
+PAN: {PAN}
+Assessment Year: {ay}
+Dated: 01/09/2026
+Subject : Remand Report in the case of SYNTHETIC TRADER A.Y {ay} - Furnishing of documents - reg.
+In this connection you are requested to submit all the documents listed as additional evidences i.e. Sl.No. 1 to 3
+for verification. You are also requested to furnish the brief reasons for acceptance of these additional evidences.{ledger}
+The above details may please be furnished on or before 18.09.2026."""
+
+
+def evidence_index_page() -> str:
+    return """ANNEXURES
+S. No. Documents submitted as an Additional Evidence Annexure No. Page no's
+1 Tax Invoices for the F.Y . 2022-23 1 5 - 16
+2 Service agreement with Synthetic Payer Limited
+dated 01.10.2023.
+2 17 - 20
+3 Bank statement 3 21 - 22
+26"""
+
+
+SUBMISSION_CASE = """SYNTHETIC TRADER
+A.Y.2023-24
+Remand Proceedings
+2. REASON FOR FURNISHING THE DOCUMENTS AS ADDITIONAL EVIDENCE - SUFFICIENT CAUSE:
+The assessee respectfully submits that the documents could not be produced before the Assessing Officer owing to a
+medical exigency faced by the assessee, which was a sufficient cause beyond the control of the assessee.
+It is particularly relevant that an identical issue was examined in the subsequent assessment year and the returned
+income was accepted without any addition.
+The bank accounts 111122223333 are maintained exclusively for the purpose of the franchise business and the
+assessee has complied with this requirement in all respects.
+The assessee earned commission and fees from the franchise and declared income at 20.66% of gross receipts.
+5"""
+
+
+def fee_receipt_page(amount: int, dates: list[str]) -> str:
+    return f"""SYNTHETIC UNIVERSITY Fees Receipt
+STUDENT NAME : A STUDENT
+Received Fees as Per Following Particular Amount
+Tuition Fee {ind(amount)} Total {ind(amount)} (Rupees in words)
+{' '.join(dates)}"""
+
+
+def order_pages(ay="2023-24", additions=(("Addition u/s 69A on account of unexplained bank credits", 1500000),),
+                returned=420000) -> list[str]:
+    rows = [f"1 Income as per ITR filed u/s 139 {ind(returned)}/-"]
+    rows += [f"{i} {d} {ind(a)}/-" for i, (d, a) in enumerate(additions, 2)]
+    total = returned + sum(a for _, a in additions)
+    variation = "4. Cases where variation is proposed:" if additions else \
+        "3. Cases where variation is not proposed:\nReason for inference drawn that no variation is required on this issue."
+    return [f"""ASSESSMENT ORDER
+4. Assessment Year {ay}
+13. Order passed under section 143(3) read with section 144B of the Income-tax Act
+14. Returned Income Rs. {ind(returned)}
+ITBA/AST/S/143(3)/2025-26/1000000001(1)
+{variation}
+The bank statement shows total credits of Rs. 4,99,000 in the account and the assessee has shown total gross receipts at Rs. 24,20,000.""",
+            f"""A.Y. {ay}
+ITBA/AST/S/143(3)/2025-26/1000000001(1)
+Subject to the above, the total income of the assessee is computed as under:
+Sl No Description Amount (in INR)
+{chr(10).join(rows)}
+{len(rows) + 1} Assessed income {ind(total)}/-"""]
+
+
+def case_bundle(**overrides) -> list[Page]:
+    """The synthetic bundle as a remand response: notice, submission, evidence index, deduction receipts."""
+    parts = {"notice": [notice_page()], "index": [evidence_index_page()], "submission": [SUBMISSION_CASE, SUBMISSION],
+             "receipts": [fee_receipt_page(50000, ["15-06-2022"]), fee_receipt_page(20000, ["20-06-2024"])],
+             "orders": order_pages(ay="2024-25", additions=())}
+    parts.update({k: overrides.pop(k) for k in list(overrides) if k in parts})
+    base = bundle(**overrides)
+    texts = parts["notice"] + parts["submission"] + parts["index"] + [p.text for p in base[1:]] + parts["receipts"] + \
+        parts["orders"]
+    return [Page(i, t, "text") for i, t in enumerate(texts, 1)]

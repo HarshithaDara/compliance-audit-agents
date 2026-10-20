@@ -183,3 +183,44 @@ The corpus has its own index (`data/index_in/`). The regulation agent picks the 
 - Ollama down: continue rules-only and note it in the trace and the report. A Claude API error
   in claude mode is handled the same way.
 - OCR engine missing: OCR'd pages are reported as `empty`, and the coverage section counts them.
+
+## Addendum (2026-10-20): case-aware review
+
+Prompted by an expert review of the first real run. That run reviewed the return as if no dispute existed, quoted
+an index row as an "explanation", counted a provisional credit as a third-party receipt, and opened a remand
+report with "Satisfactory with observations".
+
+- **Case papers.** New page types: `notice`, `proceeding_ack`, `annexure_index`, `form16a` and `fee_receipt`.
+  Pages under the submission's running header stay `submission` even when they quote other documents.
+  `case_parsers.py` extracts:
+  - the notice's proceeding, AY and requests (robust to OCR text that has lost its spaces);
+  - the evidence index, with dates;
+  - fee receipts, keeping every date printed on them;
+  - Form 16A;
+  - assessment orders per AY, with their computation table and additions.
+- **Case checks** (`case.py`): CASE_CONTEXT, NOTICE_COMPLIANCE, AO_FIGURE_RECONCILIATION (which needs the
+  same-AY order, including its double-counting test), YEAR_CONSISTENCY, DEDUCTION_EVIDENCE, EVIDENCE_RELEVANCE
+  and SUBMISSION_CLAIMS. Claims are graded supported / asserted only / contradicted by deterministic rules over
+  the bundle's facts. A large model may later extract claims more broadly; it would then classify them under the
+  same rules.
+- **Cross-document rules.** 194N certificate coverage per account. Bank credits classified before s.68:
+  - reversal / provisional (including a credit later reversed);
+  - declared payer;
+  - cash;
+  - self transfer;
+  - related party (shares a name token with the taxpayer);
+  - business;
+  - individual.
+- **Materiality.** Every finding gets `amount_at_stake` and `bearing` (weakens / supports / neutral). A finding
+  that weakens the case is high severity at ₹1 crore or more, at least medium at ₹10 lakh or more, and low under
+  ₹25,000. Document reports open with a case summary, and the verdict counts the points that weaken the case.
+- **Citations.** A pinned Indian section must quote a chunk that mentions it at least twice, or is its enacted
+  text; otherwise there is no citation. The excerpt is centred on the provision. Reports say "section tested by
+  this check" instead of a relevance score.
+- **Evaluation.** `scripts/eval_documents.py` reports recall, precision and figure accuracy. The synthetic case
+  runs in CI; real cases stay in `data/private/eval/`.
+- **Not done.**
+  - Bare-Act indexing: India Code serves the 1961 Act only as enacted.
+  - CBDT notifications: not on India Code.
+  - 234A–D / demand recomputation: needs the order's computation, so it is deferred until a same-AY order is
+    available to test against.

@@ -115,6 +115,23 @@ def build_index(corpus: Path = CORPUS, out: Path = INDEX_DIR, dense: bool = True
     return len(chunks)
 
 
+def excerpt_for(c: Chunk, size: int = 700) -> str:
+    """The chunk's opening, or, for the Indian corpus, the passage around the first mention of the
+    section, so the quoted text is about the provision being cited."""
+    if "-" not in c.section or c.section[0].isdigit():
+        return c.text[:size]
+    number = c.section.split("-", 1)[1]
+    start_of_section = re.search(rf"(?:^|\s){re.escape(number)}\.\s+[A-Z]", c.text)
+    if start_of_section:  # enacted text: quote from "194N. Every person ..."
+        return c.text[start_of_section.start():start_of_section.start() + size].strip()
+    m = re.search(rf"(?<![\dA-Z]){re.escape(number)}(?![\dA-Z])", c.text)
+    if not m or m.start() < size // 2:
+        return c.text[:size]
+    start = c.text.rfind(". ", 0, m.start() - 40)
+    start = start + 2 if start != -1 and m.start() - start < size // 2 else max(0, m.start() - size // 3)
+    return c.text[start:start + size]
+
+
 @dataclass
 class Hit:
     section: str
@@ -198,8 +215,21 @@ class Retriever:
                 fused[int(idx)] = fused.get(int(idx), 0.0) + 1.0 / (RRF_K + rank + 1)
         max_possible = 2.0 / (RRF_K + 1) if dense_scores is not None else 1.0 / (RRF_K + 1)
 
-        def best_chunk_for(section: str) -> int:
+        def best_chunk_for(section: str) -> int | None:
             ids = [c.chunk_id for c in self.by_section[section]]
+            if "-" in section and not section[0].isdigit():
+                # Indian corpus (ITA-44AD): a memorandum record can carry paragraphs about other sections,
+                # so a pinned citation must quote a chunk that actually names its section.
+                number = section.split("-", 1)[1]
+                mention = re.compile(rf"(?<![\dA-Z]){re.escape(number)}(?![\dA-Z])")
+                counts = {i: len(mention.findall(self.chunks[i].text)) for i in ids}
+                # A passing mention (a table of contents, "section X was sunset") is not the provision.
+                ids = [i for i in ids if counts[i] >= 2 or self.chunks[i].heading.endswith("enacted text")
+                       or self.chunks[i].text.lstrip().startswith(f"{number}.")]
+                if not ids:
+                    return None
+                return max(ids, key=lambda i: (self.chunks[i].heading.endswith("enacted text"), counts[i],
+                                               dense_scores[i] if dense_scores is not None else sparse[i]))
             if dense_scores is not None:
                 return max(ids, key=lambda i: dense_scores[i])
             return max(ids, key=lambda i: sparse[i])
@@ -212,12 +242,14 @@ class Retriever:
             if c.section in seen:
                 return
             seen.add(c.section)
-            hits.append(Hit(c.section, c.citation, c.heading, c.text[:700], c.source_url,
+            hits.append(Hit(c.section, c.citation, c.heading, excerpt_for(c), c.source_url,
                             round(min(1.0, score / max_possible), 4),
                             round(float(dense_scores[idx]), 4) if dense_scores is not None else 0.0, pinned))
 
         for sec in self._pinned_sections(query):
-            add(best_chunk_for(sec), max_possible, True)
+            best = best_chunk_for(sec)
+            if best is not None:
+                add(best, max_possible, True)
         for idx, score in sorted(fused.items(), key=lambda kv: (-kv[1], kv[0])):
             if len(hits) >= k:
                 break

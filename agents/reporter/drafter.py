@@ -70,7 +70,8 @@ def evidence_appendix(msg: AuditMessage) -> str:
         if f.citations:
             out.append("Governing provisions:")
             for c in f.citations:
-                out.append(f"- [{c.citation}]({c.source_url}) - {c.heading} (relevance {c.score:.2f})")
+                how = "section tested by this check" if msg.kind == "document" else f"relevance {c.score:.2f}"
+                out.append(f"- [{c.citation}]({c.source_url}) - {c.heading} ({how})")
             out.append("")
     return "\n".join(out)
 
@@ -107,8 +108,9 @@ class TemplateDrafter:
         na = [f for f in fs if f.status == Status.NOT_APPLICABLE]
         document = msg.kind == "document"
         source = "the figures extracted from the document" if document else "the XBRL financial data"
-        lines = [header(msg, self.name), "## Executive summary", "",
-                 f"**Overall assessment:** {overall_rating(fs)}.", "",
+        verdict = document_report.overall(msg) if document else overall_rating(fs)
+        lines = [header(msg, self.name)] + ([document_report.case_summary(msg)] if document else []) + [
+                 "## Executive summary", "", f"**Overall assessment:** {verdict}.", "",
                  f"{len(fs)} automated checks were run against {source}: {len(passed)} passed, "
                  f"{len(flagged)} raised observations and {len(na)} were not applicable"
                  f"{' (the document lacked their inputs)' if document else ' to this filer' + chr(39) + 's tagging'}.", ""]
@@ -272,11 +274,11 @@ class ClaudeDrafter:
     def draft(self, msg: AuditMessage) -> str:
         body = self.narrative(msg)
         if msg.kind == "document":
+            head = [header(msg, self.name), document_report.case_summary(msg)]
             tail = [document_report.coverage_section(msg), document_report.LIMITATIONS]
         else:
-            tail = [LIMITATIONS]
-        return "\n".join([header(msg, self.name), body, "", *tail, "", evidence_appendix(msg), "",
-                          pipeline_trace(msg)])
+            head, tail = [header(msg, self.name)], [LIMITATIONS]
+        return "\n".join([*head, body, "", *tail, "", evidence_appendix(msg), "", pipeline_trace(msg)])
 
 
 def make_drafter():

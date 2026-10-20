@@ -30,7 +30,13 @@ TOPICS: dict[str, list[str]] = {
     "CASH_WITHDRAWAL_194N": [r"withdraw", r"194N|certificate|WLATMO"],
     "BANK_STATEMENT_INTEGRITY": [r"bank statement"],
     "BANK_THIRD_PARTY_CREDITS": [r"credit", r"third[- ]part|source of|deposit|transfer|gross (?:bank )?credits"],
+    "NOTICE_COMPLIANCE": [r"ledger"],
+    "DEDUCTION_EVIDENCE": [r"80C|Chapter VI-?A|deduction"],
+    "YEAR_CONSISTENCY": [r"subsequent|previous|earlier", r"assessment year"],
 }
+# Case-level findings that are themselves about the papers, not discrepancies the submission should explain.
+NOT_EXPLAINABLE = {"CASE_CONTEXT", "SUBMISSION_CLAIMS", "EVIDENCE_RELEVANCE", "AO_FIGURE_RECONCILIATION"}
+MIN_QUOTE = 60  # shorter matches are table rows or headings, not explanations
 
 
 def _discussed(text: str, patterns: list[str]) -> bool:
@@ -38,18 +44,20 @@ def _discussed(text: str, patterns: list[str]) -> bool:
 
 
 def _sentence_with(text: str, pattern: str) -> str:
+    """The first prose sentence matching the pattern; table rows and headings are skipped."""
     flat = " ".join(text.split())
-    m = re.search(pattern, flat, re.IGNORECASE)
-    if not m:
-        return ""
-    start = max(flat.rfind(". ", 0, m.start()) + 2, 0)
-    end = flat.find(". ", m.end())
-    return flat[start: end + 1 if end != -1 else len(flat)][:240]
+    for m in re.finditer(pattern, flat, re.IGNORECASE):
+        start = max(flat.rfind(". ", 0, m.start()) + 2, 0)
+        end = flat.find(". ", m.end())
+        sentence = flat[start: end + 1 if end != -1 else len(flat)]
+        if len(sentence) >= MIN_QUOTE and not re.match(r"^\d{1,2}\s", sentence) and sentence.count(" ") >= 8:
+            return sentence[:240]
+    return ""
 
 
 def assess(findings: list[Finding], submission: list[Page], reader: llm.Reader | None = None,
            progress=lambda: None) -> Finding:
-    flagged = [f for f in findings if f.status in (Status.WARN, Status.FAIL)]
+    flagged = [f for f in findings if f.status in (Status.WARN, Status.FAIL) and f.check_id not in NOT_EXPLAINABLE]
     q = "Rule 46A additional evidence appellate proceedings explanation submission remand report"
     if not submission:
         return Finding(check_id="NARRATIVE_COVERAGE", title="Written submission addresses each discrepancy",
@@ -59,7 +67,8 @@ def assess(findings: list[Finding], submission: list[Page], reader: llm.Reader |
     coverage: dict[str, dict] = {}
     for f in flagged:
         patterns = TOPICS.get(f.check_id, [re.escape(f.title.split()[0])])
-        pages = [p for p in submission if _discussed(p.text, patterns)]
+        # A page counts only if it discusses the topic in prose (an index row naming the document does not).
+        pages = [p for p in submission if _discussed(p.text, patterns) and _sentence_with(p.text, patterns[-1])]
         state, quote, quoted_page = ("mentioned" if pages else "unexplained"), "", None
         if pages:
             quote, quoted_page = _sentence_with(pages[0].text, patterns[-1]), pages[0].number

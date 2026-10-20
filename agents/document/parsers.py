@@ -404,4 +404,6 @@ def parse_all(pages: Iterable[Page]) -> Facts:
     for p in by_type.get("cash_withdrawal_certificate", []):
         parse_cash_certificate(p, facts)
     parse_assessment_order(by_type.get("assessment_order", []), facts)
+    from agents.document.case_parsers import parse_case  # case papers build on these facts
+    parse_case(by_type, facts)
     return facts

@@ -26,6 +26,13 @@ RECOMMENDATIONS = {
     "BANK_STATEMENT_INTEGRITY": "Obtain the complete bank statement; the parsed pages do not reproduce the bank's summary.",
     "BANK_THIRD_PARTY_CREDITS": "Explain the nature and source of each listed third-party credit and cash deposit with confirmations (s.68).",
     "NARRATIVE_COVERAGE": "Extend the written submission to explain each discrepancy listed as not addressed.",
+    "CASE_CONTEXT": "Add the assessment order under dispute (and the appeal memo) so each addition can be reconciled against the evidence.",
+    "NOTICE_COMPLIANCE": "Furnish every item the notice called for (here: the ledger extracts / confirmations of the parties), or state why it cannot be produced.",
+    "SUBMISSION_CLAIMS": "Annex evidence for each claim marked 'asserted only' (e.g. medical records for the Rule 46A cause, statements of the accounts said to be exclusive) and address the contradicted ones.",
+    "AO_FIGURE_RECONCILIATION": "Point out to the appellate authority each figure in the order that the documents do not support, and any double counting of receipts already offered.",
+    "YEAR_CONSISTENCY": "Explain the differences from the other year's return and order (e.g. why interest offered then was not offered this year).",
+    "DEDUCTION_EVIDENCE": "Annex payment evidence dated within the previous year for the full Chapter VI-A deduction claimed.",
+    "EVIDENCE_RELEVANCE": "Present post-year documents only as context, alongside evidence from the year itself.",
 }
 
 LIMITATIONS = ("## Scope and limitations\n\nThis report was generated automatically from the uploaded PDF. Figures were "
@@ -74,6 +81,75 @@ def header(msg: AuditMessage, drafter: str) -> str:
         f"- **Drafted by:** {drafter}",
         "",
     ])
+
+
+WEAKENS, SUPPORTS = "weakens the taxpayer's case", "supports the taxpayer"
+# How a flagged check reads as an issue (check titles describe the test, not the problem found).
+ISSUE = {
+    "CASH_WITHDRAWAL_194N": "Cash withdrawals not covered by monthly WLATMO certificates",
+    "NOTICE_COMPLIANCE": "Items the notice called for were not furnished",
+    "SUBMISSION_CLAIMS": "Claims in the submission not backed by evidence",
+    "BANK_THIRD_PARTY_CREDITS": "Bank credits from third parties and cash deposits, unexplained",
+    "PRESUMPTIVE_44AD": "Commission receipts put s.44AD eligibility at risk",
+    "OTHER_INCOME_OMITTED": "AIS interest not offered in the return",
+    "INVOICES_VS_GSTR1": "Invoices do not match GSTR-1",
+    "NARRATIVE_COVERAGE": "Discrepancies the submission does not explain",
+    "DEDUCTION_EVIDENCE": "Chapter VI-A deduction not fully evidenced",
+    "TDS_HEAD": "TDS claimed under a head with no income",
+    "TURNOVER_AIS_VS_ITR": "Receipts in the AIS differ from the return",
+    "TURNOVER_GST_VS_ITR": "GST turnover differs from the return",
+    "GSTR1_VS_GSTR3B": "GSTR-1 and GSTR-3B differ",
+    "TDS_CREDIT": "TDS claimed differs from the AIS",
+    "AUDIT_44AB": "Tax audit required",
+    "TAX_COMPUTATION": "Tax computation does not agree",
+    "LATE_FILING": "Belated return",
+    "YEAR_CONSISTENCY": "Inconsistent with other years",
+    "AO_FIGURE_RECONCILIATION": "Figures in the order do not match the documents",
+    "BANK_STATEMENT_INTEGRITY": "Bank statement incomplete",
+}
+SEV_RANK = {"high": 0, "medium": 1, "low": 2, "info": 3}
+
+
+def _flagged(msg: AuditMessage):
+    return [f for f in msg.findings if f.status.value in ("warn", "fail")]
+
+
+def overall(msg: AuditMessage) -> str:
+    weak = [f for f in _flagged(msg) if f.values.get("bearing") == WEAKENS]
+    high = [f for f in weak if f.severity.value == "high"]
+    if high:
+        return (f"Significant weaknesses - {len(high)} high-severity point(s) and {len(weak) - len(high)} other point(s) "
+                f"weaken the taxpayer's position and need action before the hearing")
+    if weak:
+        return f"Gaps to address - {len(weak)} point(s) weaken the taxpayer's position"
+    return "Well supported - no point found that weakens the taxpayer's position"
+
+
+def case_summary(msg: AuditMessage) -> str:
+    """Opens the report: the case, the amounts at stake, what helps and what hurts."""
+    by_id = {f.check_id: f for f in msg.findings}
+    out = ["## Case summary", ""]
+    ctx = by_id.get("CASE_CONTEXT")
+    if ctx is not None and ctx.status.value != "not_applicable":
+        out += [ctx.detail, ""]
+    weak = sorted([f for f in _flagged(msg) if f.values.get("bearing") == WEAKENS],
+                  key=lambda f: (SEV_RANK[f.severity.value], -(f.values.get("amount_at_stake") or 0)))
+    if weak:
+        out += ["**What weakens the taxpayer's case** (most serious first):", "",
+                "| Severity | Issue | Amount involved | Pages |", "|---|---|---|---|"]
+        for f in weak:
+            amount = f.values.get("amount_at_stake")
+            pages = sorted({e.page for e in f.evidence})
+            out.append(f"| {f.severity.value} | {ISSUE.get(f.check_id, f.title)} | {inr(amount) if amount else '-'} | "
+                       f"{', '.join(map(str, pages[:6]))}{'…' if len(pages) > 6 else ''} |")
+        out.append("")
+    claims = by_id.get("SUBMISSION_CLAIMS")
+    strengths = [f.title for f in msg.findings if f.values.get("bearing") == SUPPORTS]
+    if claims is not None:
+        strengths += [c["claim"] for c in claims.values.get("claims", []) if c["status"] == "supported"]
+    if strengths:
+        out += ["**What supports the taxpayer:**", ""] + [f"- {s}" for s in dict.fromkeys(strengths)] + [""]
+    return "\n".join(out)
 
 
 def coverage_section(msg: AuditMessage) -> str:

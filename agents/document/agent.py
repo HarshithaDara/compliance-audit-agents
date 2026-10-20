@@ -15,13 +15,24 @@ from common import bus, config
 from common.blobs import delete_pdf, load_pdf
 from common.schemas import AuditMessage, Status
 
-from agents.document import checks, classify, llm, narrative, parsers
+from agents.document import case, checks, classify, llm, narrative, parsers
 from agents.document.pdftext import UnreadablePdf, extract_pages, rapidocr_engine
 
 AGENT = "document"
 log = logging.getLogger(AGENT)
 
 AI_PAGE_TYPES = {"other", "assessment_order", "agreement"}
+
+
+def analyse(pages: list, facts: parsers.Facts, reader: llm.Reader | None = None, progress=lambda: None) -> list:
+    """All checks over classified pages and their facts: return-level checks, case-level checks,
+    narrative coverage, then materiality and bearing. Pure, so the evaluation harness can run it."""
+    submission = [p for p in pages if p.doc_type == "submission"]
+    findings = checks.run_all(facts, "\n".join(p.text for p in submission))
+    findings += case.run_case_checks(facts, pages, findings)
+    findings.append(narrative.assess(findings, submission, reader, progress=progress))
+    case.annotate(findings, case_mode=bool(facts.first("case.notice") or facts.first("order")))
+    return findings
 
 
 def make_handler(r, ocr="auto", reader_factory=llm.make_reader):
@@ -60,15 +71,12 @@ def make_handler(r, ocr="auto", reader_factory=llm.make_reader):
         doc.form = facts.value("itr.form")
         doc.pan_masked = facts.value("itr.pan_masked")
         doc.taxpayer = facts.value("itr.name")
-        submission = [p for p in pages if p.doc_type == "submission"]
-        findings = checks.run_all(facts, "\n".join(p.text for p in submission))
-
         reader, used = reader_factory(doc.ai_reader)
         doc.ai_reader_used = used
         if reader is not None:
             targets = [p for p in pages if p.doc_type in AI_PAGE_TYPES][:config.DOC_LLM_MAX_PAGES]
             doc.ai_figures = llm.extract_figures(reader, targets, progress=bus.keepalive)
-        findings.append(narrative.assess(findings, submission, reader, progress=bus.keepalive))
+        findings = analyse(pages, facts, reader, progress=bus.keepalive)
 
         msg.findings = findings
         msg.fiscal_year = int(doc.assessment_year[:4]) - 1 if doc.assessment_year else None

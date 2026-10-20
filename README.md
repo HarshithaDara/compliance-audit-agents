@@ -42,6 +42,43 @@ It then runs 15 checks:
 The regulation agent cites only the statutory sections each check names, and the report lists the source pages
 beside every number.
 
+**Case-aware review.** A remand or appeal bundle exists because of a dispute, so the agent reads the case papers too:
+
+- It classifies the bundle (remand, appeal, show-cause, reassessment, scrutiny). It reads the officer's notice, and
+  checks that **everything the notice called for was furnished**.
+- It parses assessment orders (ITBA layout) into their additions, with amount, section and description. For the
+  order under dispute, it **reconciles every figure the officer used** against the documents, and flags double
+  counting, such as receipts already offered being added again as bank credits. If the order isn't in the bundle,
+  the report says so instead of guessing.
+- It extracts the **claims in the written submission** and grades each one as supported, asserted only or
+  contradicted. Examples: a medical exigency as the Rule 46A cause, "accounts used exclusively for the business",
+  receipts described as commission while claiming s.44AD.
+- Cross-document rules:
+  - certificate coverage per bank account and month;
+  - bank credits classified before s.68 (reversals and provisional credits, self transfers, possible relatives,
+    businesses, cash);
+  - Chapter VI-A evidence by payment date;
+  - evidence dated after the year;
+  - consistency with the orders of other years.
+- Every finding carries the **amount involved**, and whether it **weakens or supports** the taxpayer. Severity is
+  sized by the money at stake, and the report opens with a case summary ranked by severity and amount.
+
+**Evaluation.** `scripts/eval_documents.py` scores the agent against expert-expected findings:
+
+- **Issue recall:** the expected findings it raised.
+- **Precision:** how many of its flags are expected or acceptable.
+- **Figure accuracy:** extracted facts against their expected values.
+
+| Case | Pages | Issue recall | Precision | Figure accuracy |
+|---|---|---|---|---|
+| Synthetic remand bundle (`tests/eval/synthetic.json`, runs in CI) | 56 | 100% | 100% | 100% |
+| Real remand bundle, AY 2023-24 (private, not in the repo) | 354 | 100% (14/14) | 100% | 100% (9/9) |
+
+The real case's expected list was written by the developer after building the checks. It shows what the agent can
+reach, not an independent score. Six expert points need documents outside that bundle (the order under dispute
+and its figures), and are listed separately rather than counted. More cases with independently written
+expectations are the next step.
+
 **Confidential documents stay local by default:**
 
 - The PDF lives in Redis only until it has been read, and expires after an hour regardless. It is never written
@@ -145,9 +182,10 @@ curl -F file=@bundle.pdf -F ai_reader=local localhost:8000/documents   # audit a
 ## Testing
 
 ```bash
-python -m pytest -q                                      # 123 unit + integration tests
+python -m pytest -q                                      # 140 unit + integration tests
 python scripts/run_e2e.py --repeats 3                    # live end-to-end regression
 python scripts/run_doc_e2e.py --url http://localhost:8080 # document audit end to end (synthetic bundle)
+python scripts/eval_documents.py tests/eval/*.json        # recall / precision / figure accuracy
 python scripts/resilience_test.py --stop ... --start ... # agent-outage drill
 ```
 
@@ -181,7 +219,8 @@ Sample reports from the end-to-end runs are in [`docs/sample-reports/`](docs/sam
 agents/crosscheck/   SEC client, 11 accounting checks, agent loop, Dockerfile
 agents/regulation/   hybrid retriever, agent loop, Dockerfile (index baked into the image)
 agents/reporter/     Claude + template drafters, grounding validator, refinement loop, Dockerfile
-agents/document/     PDF text + OCR, page classifier, parsers, 15 checks, AI reader, narrative coverage, Dockerfile
+agents/document/     PDF text + OCR, page classifier, parsers (returns and case papers), 15 return checks,
+                     7 case checks, materiality, AI reader, narrative coverage, Dockerfile
 agents/gateway/      FastAPI service, web UI, Dockerfile
 common/              message schemas, Redis Streams worker, config
 scraper/             eCFR scraper -> data/regulations.jsonl; Indian tax law scraper -> data/regulations_in.jsonl
@@ -198,6 +237,8 @@ Checks are marked N/A when a filer doesn't tag the concepts they need (for examp
 
 Document audits are a reviewer's checklist, not legal advice. The parsers target the layouts of the Indian
 e-filing portal (ITR, AIS/TIS), the GST portal (GSTR-1/3B) and common bank statements. Other layouts are
-classified as `other`; they are read only by the AI reader and the narrative check. Legal citations come from
+classified as `other`; they are read only by the AI reader and the narrative check. CBDT notifications (for
+example the s.194N WLATMO exemption of 18 September 2019) are not in the corpus, because India Code does not carry
+them; where a bundle quotes a notification, the finding relies on those pages. Legal citations come from
 the Finance Bill memoranda (which explain each amendment) rather than the consolidated Act text, because
 incometaxindia.gov.in and India Code's consolidated Income-tax Act are not available to automated clients.

@@ -477,11 +477,22 @@ def check_cash_withdrawals(facts: Facts) -> Finding:
     for c in certs:
         cert_monthly[c.value["month"]] += c.value["amount"]
     uncovered = sorted(m for m in monthly if m not in cert_monthly)
+    # Coverage per account: the exemption is account by account, so a month with certificates for
+    # some accounts can still have an account whose withdrawals are uncertified.
+    by_account: dict[str, set[str]] = defaultdict(set)
+    for c in certs:
+        by_account[c.value["account"]].add(c.value["month"])
+    account_gaps = {}
+    for account, months in sorted(by_account.items()):
+        missing = sorted(m for m in monthly if m >= min(months) and m not in months and m not in uncovered)
+        if missing:
+            account_gaps[account] = missing
     mismatched = {m: {"ais": monthly[m], "certificates": cert_monthly[m]} for m in sorted(cert_monthly)
                   if m in monthly and abs(monthly[m] - cert_monthly[m]) > tolerance(monthly[m])}
     values = {"ais_withdrawals": total, "tds_deducted": tds, "months_with_withdrawals": len(monthly),
               "certificates_in_fy": len(certs), "months_without_certificate": uncovered,
-              "uncovered_amount": sum(monthly[m] for m in uncovered), "certificate_vs_ais_mismatch": mismatched}
+              "uncovered_amount": sum(monthly[m] for m in uncovered), "accounts_certified": sorted(by_account),
+              "account_gaps": account_gaps, "certificate_vs_ais_mismatch": mismatched}
     evidence = [e for f in sections for e in ev(f, "AIS 194N cash withdrawals", f.value["amount"])] + \
         [e for c in certs[:12] for e in ev(c, f"WLATMO certificate {c.value['month']} ({c.value['account']})")]
     if total <= CRORE:
@@ -497,8 +508,11 @@ def check_cash_withdrawals(facts: Facts) -> Finding:
                        reg_query=q, evidence=evidence)
     issues = []
     if uncovered:
-        issues.append(f"no certificate on file for {', '.join(uncovered)} "
+        issues.append(f"no certificate for any account in {', '.join(uncovered)} "
                       f"({inr(values['uncovered_amount'])} withdrawn in those months)")
+    for account, missing in account_gaps.items():
+        issues.append(f"account {account} has certificates from {min(by_account[account])} but none for "
+                      f"{', '.join(missing)}")
     if mismatched:
         issues.append("certificate totals differ from the AIS in " + ", ".join(
             f"{m} (certificates {inr(v['certificates'])} vs AIS {inr(v['ais'])})" for m, v in mismatched.items()))
@@ -578,17 +592,26 @@ def check_bank_third_party(facts: Facts, declared_payer: re.Pattern | None = Non
     if txns is None:
         return na(cid, title, "a bank statement", q)
     declared_payer = declared_payer or declared_payers(facts)
-    rows = [r for r in txns.value["rows"] if r["direction"] == "credit"]
-    payer = [r for r in rows if declared_payer.search(r["narration"])]
-    cash = [r for r in rows if CASH_RE.search(r["narration"])]
-    others = [r for r in rows if r not in payer and r not in cash and not NON_RECEIPT_RE.search(r["narration"])]
-    large = sorted([r for r in others if r["amount"] >= 50_000], key=lambda r: -r["amount"])
-    values = {"credits_total": round(sum(r["amount"] for r in rows), 2),
-              "from_declared_payer": round(sum(r["amount"] for r in payer), 2),
-              "cash_deposits": round(sum(r["amount"] for r in cash), 2), "cash_deposit_count": len(cash),
-              "other_credits": round(sum(r["amount"] for r in others), 2),
+    all_rows = txns.value["rows"]
+    rows = [r for r in all_rows if r["direction"] == "credit"]
+    reversed_debits = [r for r in all_rows if r["direction"] == "debit" and REVERSAL_DEBIT_RE.search(r["narration"])]
+    name_tokens = {t for t in (facts.value("itr.name") or "").upper().split() if len(t) >= 3}
+    classes: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        classes[classify_credit(r, declared_payer, name_tokens, reversed_debits)].append(r)
+    flaggable = [r for c in ("business", "individual", "related party") for r in classes[c]]
+    large = sorted([r for r in flaggable if r["amount"] >= 50_000], key=lambda r: -r["amount"])
+    cash = classes["cash deposit"]
+    total = lambda rs: round(sum(r["amount"] for r in rs), 2)  # noqa: E731
+    unexplained = total(large) + (total(cash) if total(cash) >= 50_000 else 0)
+    values = {"credits_total": total(rows), "from_declared_payer": total(classes["declared payer"]),
+              "by_class": {c: {"count": len(rs), "total": total(rs)} for c, rs in sorted(classes.items())},
+              "cash_deposits": total(cash), "cash_deposit_count": len(cash),
+              "excluded_not_receipts": total(classes["reversal / provisional"]) + total(classes["self transfer"]),
               "large_other_credits": [{"date": r["date"], "amount": r["amount"], "from": _counterparty(r["narration"]),
-                                       "page": r["page"]} for r in large[:15]]}
+                                       "class": classify_credit(r, declared_payer, name_tokens, reversed_debits),
+                                       "page": r["page"]} for r in large[:15]],
+              "unexplained_total": unexplained, "confirmations_in_bundle": False}
     evidence = [Evidence(page=r["page"], label=f"credit {r['date']} from {_counterparty(r['narration'])}",
                          value=r["amount"], quote=r["narration"][:160]) for r in large[:8]]
     if cash:
@@ -599,18 +622,54 @@ def check_bank_third_party(facts: Facts, declared_payer: re.Pattern | None = Non
                        detail=f"Credits come from the declared payer ({inr(values['from_declared_payer'])}) or are small.",
                        values=values, reg_query=q, evidence=evidence)
     parts = []
-    if large:
-        parts.append(f"{len(large)} credits of ₹50,000 or more from other parties totalling "
-                     f"{inr(sum(r['amount'] for r in large))} (largest: {inr(large[0]['amount'])} from "
-                     f"{_counterparty(large[0]['narration'])} on {large[0]['date']}, page {large[0]['page']})")
+    for cls, label in (("business", "businesses"), ("individual", "other individuals"),
+                       ("related party", "persons sharing the taxpayer's name (possible relatives)")):
+        big = [r for r in large if r in classes[cls]]
+        if big:
+            top = big[0]
+            parts.append(f"{len(big)} credit(s) of ₹50,000 or more from {label} totalling {inr(total(big))} "
+                         f"(largest {inr(top['amount'])} from {_counterparty(top['narration'])} on {top['date']}, "
+                         f"page {top['page']})")
     if values["cash_deposits"] >= 50_000:
         parts.append(f"{len(cash)} cash deposits totalling {inr(values['cash_deposits'])}")
+    excluded = values["excluded_not_receipts"]
     return Finding(check_id=cid, title=title, status=Status.WARN, severity=Severity.MEDIUM,
                    detail=f"Of {inr(values['credits_total'])} credited, {inr(values['from_declared_payer'])} is from the "
-                          f"declared payer. The statement also shows " + " and ".join(parts) +
-                          ". Each needs its nature and source explained (s.68), and they sit uneasily with a claim that "
-                          "the account is used only for the franchise business.",
+                          f"declared payer" + (f" and {inr(excluded)} are reversals, provisional credits or self "
+                                               f"transfers (not receipts)" if excluded else "") +
+                          ". The rest includes " + "; ".join(parts) + ". No confirmations, ledger extracts or the payers' "
+                          "documents are in the bundle, so each is explained by assertion at most; under s.68 the "
+                          "nature and source of each credit must be shown.",
                    values=values, reg_query=q, evidence=evidence)
+
+
+REVERSAL_DEBIT_RE = re.compile(r"(?i)\bTEMP\s*CR\s*REVERSAL\b|\bREVERSAL\b")
+NOT_RECEIPT_RE = re.compile(r"(?i)\bPROV\s*CR\b|\bTEMP\s*CR\b|^REV[-_ ]|\bREVERSAL\b|\bRETURN(?:ED)?\b|\bREFUND\b|"
+                            r"\bINT\.?\s*PD\b|\bINTEREST\b|\bCASHBACK\b")
+BUSINESS_RE = re.compile(r"(?i)\b(?:ENTERPRISES?|TRADERS?|TRADING|LTD|LIMITED|PVT|AGENC(?:Y|IES)|INDUSTRIES|STORES?|"
+                         r"CORPORATION|COMPANY|CO\.?|LLP|SOLUTIONS|SERVICES)\b")
+
+
+def classify_credit(r: dict, payer: re.Pattern, name_tokens: set[str], reversed_debits: list[dict]) -> str:
+    """Bank credits are not all receipts: reversals and provisional credits undone later, transfers
+    from the taxpayer's own accounts, relatives, businesses and cash deposits need different treatment."""
+    n = r["narration"]
+    if NOT_RECEIPT_RE.search(n) or any(abs(d["amount"] - r["amount"]) < 0.01 and d["date"] >= r["date"]
+                                       for d in reversed_debits):
+        return "reversal / provisional"
+    if payer.search(n):
+        return "declared payer"
+    if CASH_RE.search(n):
+        return "cash deposit"
+    who = _counterparty(n).upper()
+    tokens = {t for t in re.split(r"[^A-Z]+", who) if len(t) >= 3}
+    if name_tokens and name_tokens <= tokens:
+        return "self transfer"
+    if BUSINESS_RE.search(who):
+        return "business"
+    if name_tokens & tokens:
+        return "related party"
+    return "individual"
 
 
 def run_all(facts: Facts, submission_text: str = "") -> list[Finding]:

@@ -12,6 +12,12 @@ from agents.document.pdftext import Page
 
 # (type, strong signatures: any one starts a section)
 STRONG = [
+    # Case papers: the department's notice / letter, and the portal's acknowledgement of a response.
+    ("notice", [r"(?i)you\s*are\s*(?:hereby\s*)?requested\s*to\s*(?:submit|furnish|produce)", r"(?i)show\s*cause\s*notice"]),
+    ("proceeding_ack", [r"e-Proceedings Response Acknowledgement"]),
+    ("annexure_index", [r"(?i)Documents submitted as an? Additional Evidence", r"(?im)^\s*S\.?\s*No\.?\s+Documents?\b.*Annexure"]),
+    ("form16a", [r"(?i)FORM\s*NO\.?\s*16A"]),
+    ("fee_receipt", [r"Fees? Receipt\b", r"Tui?tion Fee"]),  # case-sensitive: prose says "fees receipts"
     ("itr_ack", [r"INDIAN INCOME TAX RETURN ACKNOWLEDGEMENT"]),
     ("tis", [r"Taxpayer Information Summary \(TIS\)"]),
     ("ais", [r"Annual Information Statement \(AIS\)"]),
@@ -35,7 +41,11 @@ CONTINUATION = {
     "itr": [r"\bSchedule\b|\bSCHEDULE\b"],
     "assessment_order": [r"Page \d+ of \d+"],
     "agreement": [r"Agreement|agreement|CHANNEL ?PARTNER"],
+    "form16a": [r"Certificate\s*Number\s*:|TAN\s*of\s*Deductor"],
 }
+# The running header of the taxpayer's own written submission; its pages often quote other documents
+# (agreement clauses, AIS tables), which must not reclassify them.
+SUBMISSION_HEADER = re.compile(r"(?i)remand\s*proceedings|written\s*submissions?\b|grounds\s*of\s*appeal|statement\s*of\s*facts")
 SUBMISSION = re.compile(r"\b(?:assessee|Assessee|Respected Sir|respectfully submit|Remand|Annexure)\b")
 
 
@@ -44,6 +54,9 @@ def _matches(pattern: str, text: str) -> bool:
 
 
 def classify_page(text: str, previous: str = "other") -> str:
+    head = "\n".join(text.splitlines()[:4])
+    if SUBMISSION_HEADER.search(head) and not re.search(r"Documents submitted as an? Additional Evidence", text):
+        return "submission"
     for doc_type, patterns in STRONG:
         if all(_matches(p, text) for p in patterns) if doc_type == "cash_withdrawal_certificate" \
                 else any(_matches(p, text) for p in patterns):

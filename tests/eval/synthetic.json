@@ -1,0 +1,16 @@
+{"name": "Synthetic remand bundle", "synthetic": "case_bundle",
+ "expected": [
+  {"id": "order-under-dispute-missing", "check": "CASE_CONTEXT", "status": ["warn"], "contains": ["remand", "not in the bundle"]},
+  {"id": "ledger-not-furnished", "check": "NOTICE_COMPLIANCE", "status": ["fail"], "contains": ["ledger"]},
+  {"id": "194n-months-without-certificates", "check": "CASH_WITHDRAWAL_194N", "status": ["warn"], "contains": ["2022-04", "2022-07"]},
+  {"id": "third-party-credit", "check": "BANK_THIRD_PARTY_CREDITS", "status": ["warn"], "contains": ["ACME ENTERPRISES"]},
+  {"id": "commission-vs-44ad", "check": "PRESUMPTIVE_44AD", "status": ["warn"], "contains": ["44AD(6)"]},
+  {"id": "interest-omitted", "check": "OTHER_INCOME_OMITTED", "status": ["warn"], "contains": ["1,500"]},
+  {"id": "medical-asserted-only", "check": "SUBMISSION_CLAIMS", "status": ["warn"], "contains": ["medical", "asserted only"]},
+  {"id": "deduction-gap", "check": "DEDUCTION_EVIDENCE", "status": ["warn"], "contains": ["30,000"]},
+  {"id": "agreement-postdates-year", "check": "EVIDENCE_RELEVANCE", "status": ["warn"], "contains": ["2023-10-01"]},
+  {"id": "gst-timing", "check": "TURNOVER_GST_VS_ITR", "status": ["warn"], "contains": ["timing difference"]}
+ ],
+ "acceptable_extra": ["INVOICES_VS_GSTR1", "TDS_HEAD", "LATE_FILING", "NARRATIVE_COVERAGE"],
+ "facts": {"itr.assessment_year": "2023-24", "itr.gross_receipts_44ad": 2420000, "itr.total_income": 420000,
+           "itr.chapter_via": 80000, "itr.tds_claimed_total": 24220}}
