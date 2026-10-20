@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compliance Audit Agents</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5d6673; --line: #e3e6ea;
+    --accent: #2f5bd3; --accent-soft: #e8eefc;
+    --pass: #1f7a3d; --pass-bg: #e6f4ea; --warn: #8a5a00; --warn-bg: #fdf3dc;
+    --fail: #b3261e; --fail-bg: #fce8e6; --na: #5d6673; --na-bg: #eef0f2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111418; --panel: #1a1e24; --text: #e6e9ed; --muted: #9aa3ad; --line: #2b313a;
+      --accent: #7c9cf5; --accent-soft: #232c45;
+      --pass: #6fcf8f; --pass-bg: #18301f; --warn: #f0c060; --warn-bg: #352b14;
+      --fail: #f28b82; --fail-bg: #3a1d1b; --na: #9aa3ad; --na-bg: #242931;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { background: var(--panel); border-bottom: 1px solid var(--line); }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+  header .wrap { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 14px; padding-bottom: 14px; flex-wrap: wrap; }
+  h1 { font-size: 19px; margin: 0; }
+  h1 small { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  a { color: var(--accent); }
+  main { padding: 20px 0 48px; display: grid; gap: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+  .muted { color: var(--muted); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+  label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+  input { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line);
+          border-radius: 8px; padding: 9px 11px; width: 150px; }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  button { font: inherit; border-radius: 8px; padding: 9px 16px; cursor: pointer; border: 1px solid var(--line);
+           background: var(--panel); color: var(--text); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .55; cursor: wait; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+  .chip { padding: 4px 10px; font-size: 13px; border-radius: 999px; background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+  .error { color: var(--fail); margin-top: 10px; }
+
+  .pipeline { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .step { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; position: relative; }
+  .step b { display: block; font-size: 14px; }
+  .step span { font-size: 12px; color: var(--muted); }
+  .step.active { border-color: var(--accent); background: var(--accent-soft); }
+  .step.active b::after { content: " …"; }
+  .step.done { border-color: var(--pass); }
+  .step.done b::before { content: "✓ "; color: var(--pass); }
+  .step.failed { border-color: var(--fail); background: var(--fail-bg); }
+  #stage-note { margin-top: 10px; font-size: 13px; }
+
+  .company { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .company h2 { font-size: 20px; margin: 0; }
+  .verdict { margin-top: 14px; padding: 12px 14px; border-radius: 8px; font-weight: 600; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+  .stat { border-radius: 8px; padding: 10px; text-align: center; }
+  .stat b { display: block; font-size: 22px; }
+  .stat span { font-size: 12px; }
+
+  .finding { border: 1px solid var(--line); border-radius: 8px; margin-top: 10px; overflow: hidden; }
+  .finding summary { list-style: none; cursor: pointer; padding: 12px 14px; display: flex; gap: 10px; align-items: start; }
+  .finding summary::-webkit-details-marker { display: none; }
+  .finding[open] summary { border-bottom: 1px solid var(--line); }
+  .finding .title { font-weight: 600; }
+  .finding .detail { font-size: 14px; color: var(--muted); }
+  .finding .body { padding: 12px 14px; display: grid; gap: 12px; }
+  .badge { flex: none; font-size: 11px; font-weight: 700; letter-spacing: .03em; padding: 3px 8px; border-radius: 999px; text-transform: uppercase; margin-top: 2px; min-width: 46px; text-align: center; }
+  .s-pass { color: var(--pass); background: var(--pass-bg); }
+  .s-warn { color: var(--warn); background: var(--warn-bg); }
+  .s-fail { color: var(--fail); background: var(--fail-bg); }
+  .s-not_applicable { color: var(--na); background: var(--na-bg); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  td, th { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .cite { font-size: 13px; }
+  .cite p { margin: 2px 0 0; color: var(--muted); }
+  .sev { font-size: 12px; color: var(--muted); }
+
+  .trace li { margin-bottom: 4px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+  .system { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; font-size: 13px; }
+  .system div { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  .hidden { display: none; }
+  @media (max-width: 640px) {
+    .pipeline, .stats { grid-template-columns: repeat(2, 1fr); }
+    input { width: 100%; } label { flex: 1 1 140px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>Compliance Audit Agents
+      <small>Three AI agents audit a company's latest SEC 10-K: numbers cross-check → regulation lookup → report</small></h1>
+    <a href="/docs">API docs</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="panel">
+    <h2>Run an audit</h2>
+    <form id="form" class="row" autocomplete="off">
+      <label>Stock ticker <input id="ticker" required maxlength="10" placeholder="e.g. AAPL"></label>
+      <label>Fiscal year (optional) <input id="fy" type="number" min="2009" max="2100" placeholder="latest"></label>
+      <button class="primary" id="run" type="submit">Run audit</button>
+    </form>
+    <div class="chips" id="chips"></div>
+    <div class="error" id="error" role="alert"></div>
+  </section>
+
+  <section class="panel hidden" id="progress">
+    <h2>Agents at work</h2>
+    <div class="pipeline">
+      <div class="step" data-step="queued"><b>Queued</b><span>Gateway accepted the request</span></div>
+      <div class="step" data-step="crosscheck"><b>Cross-check agent</b><span>Pulls SEC XBRL data, runs 11 checks</span></div>
+      <div class="step" data-step="regulation"><b>Regulation agent</b><span>Finds the governing SEC rules (RAG)</span></div>
+      <div class="step" data-step="report"><b>Report agent</b><span>Drafts and validates the report</span></div>
+    </div>
+    <div id="stage-note" class="muted"></div>
+  </section>
+
+  <section class="hidden" id="results"></section>
+
+  <section class="panel">
+    <h2>System status</h2>
+    <div class="system" id="system"><div class="muted">Loading…</div></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+
+const STAGE = {
+  queued: ["queued", "Waiting for a cross-check agent to pick up the job…"],
+  crosschecking: ["crosscheck", "Cross-check agent is reading the 10-K data from SEC EDGAR and running the checks…"],
+  retrieving_regulations: ["regulation", "Regulation agent is searching 248 SEC regulation sections for each finding…"],
+  refining_citations: ["regulation", "Report agent sent weakly-cited findings back to the regulation agent for a second search…"],
+  drafting_report: ["report", "Report agent is drafting the report and checking every citation and number…"],
+  completed: ["done", "Done."],
+  failed: ["failed", ""],
+};
+const ORDER = ["queued", "crosscheck", "regulation", "report"];
+const STATUS_LABEL = {pass: "Pass", warn: "Warn", fail: "Fail", not_applicable: "N/A"};
+const STATUS_RANK = {fail: 0, warn: 1, pass: 2, not_applicable: 3};
+const SEV_RANK = {high: 0, medium: 1, low: 2, info: 3};
+const CHECK_HELP = {
+  BS_IDENTITY: "Total assets should equal total liabilities plus equity.",
+  BS_COMPONENTS: "Liabilities and equity lines should add up to the reported total.",
+  GROSS_PROFIT: "Revenue minus cost of revenue should equal gross profit.",
+  EPS_DILUTED: "Earnings per share should match net income divided by shares.",
+  CASH_RECON: "Operating + investing + financing cash flows should equal the change in cash.",
+  YOY_REVENUE: "Big revenue swings must be explained in the MD&A section.",
+  YOY_NET_INCOME: "Big profit swings must be explained in the MD&A section.",
+  RESTATEMENT: "Last year's numbers should match what was originally filed.",
+  FILING_TIMELINESS: "The 10-K must be filed within 60/75/90 days depending on company size.",
+  LIQUIDITY: "Warning signs about the company's ability to pay its bills.",
+  XBRL_CONSISTENCY: "The same fact should not be tagged with two different values.",
+};
+
+let pollTimer = null;
+
+function fmtValue(v) {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "number") {
+    const a = Math.abs(v);
+    if (a >= 1e9) return (v / 1e9).toLocaleString(undefined, {maximumFractionDigits: 2}) + " B";
+    if (a >= 1e6) return (v / 1e6).toLocaleString(undefined, {maximumFractionDigits: 1}) + " M";
+    return v.toLocaleString(undefined, {maximumFractionDigits: 4});
+  }
+  if (typeof v === "object") return JSON.stringify(v, null, 1);
+  return String(v);
+}
+
+function verdict(findings) {
+  if (findings.some((f) => f.status === "fail" && f.severity === "high"))
+    return ["Exceptions noted: material issues need follow-up", "s-fail"];
+  if (findings.some((f) => ["fail", "warn"].includes(f.status) && ["high", "medium"].includes(f.severity)))
+    return ["Satisfactory with observations", "s-warn"];
+  return ["Satisfactory: no exceptions", "s-pass"];
+}
+
+function setStage(status, error) {
+  const [key, note] = STAGE[status] || ["queued", status];
+  const idx = key === "done" ? ORDER.length : ORDER.indexOf(key);
+  document.querySelectorAll(".step").forEach((el, i) => {
+    el.classList.remove("active", "done", "failed");
+    if (key === "failed") { if (i === 0) el.classList.add("done"); return; }
+    if (i < idx) el.classList.add("done");
+    else if (i === idx) el.classList.add("active");
+  });
+  if (key === "failed") document.querySelectorAll(".step:not(.done)")[0]?.classList.add("failed");
+  $("stage-note").textContent = key === "failed" ? "Audit failed: " + (error || "unknown error") : note;
+}
+
+function renderFinding(f) {
+  const rows = Object.entries(f.values || {}).map(([k, v]) =>
+    `<tr><td>${esc(k)}</td><td class="num">${esc(fmtValue(v))}</td></tr>`).join("");
+  const cites = (f.citations || []).map((c) => `
+    <div class="cite"><a href="${esc(c.source_url)}" target="_blank" rel="noopener">${esc(c.citation)}</a>
+      ${esc(c.heading)} <span class="muted">(relevance ${Number(c.score).toFixed(2)})</span>
+      <p>${esc(c.excerpt.slice(0, 260))}…</p></div>`).join("");
+  return `
+  <details class="finding" ${f.status === "fail" || f.status === "warn" ? "open" : ""}>
+    <summary>
+      <span class="badge s-${esc(f.status)}">${esc(STATUS_LABEL[f.status] || f.status)}</span>
+      <span><span class="title">${esc(f.title)}</span>
+        <span class="sev"> · severity ${esc(f.severity)}</span><br>
+        <span class="detail">${esc(f.detail)}</span></span>
+    </summary>
+    <div class="body">
+      <div class="muted">${esc(CHECK_HELP[f.check_id] || "")}</div>
+      ${rows ? `<table><tbody>${rows}</tbody></table>` : ""}
+      ${cites ? `<div><b>Governing SEC rules</b>${cites}</div>` : ""}
+    </div>
+  </details>`;
+}
+
+function renderResult(result, state) {
+  const c = result.company;
+  const fs = [...result.findings].sort((a, b) =>
+    STATUS_RANK[a.status] - STATUS_RANK[b.status] || SEV_RANK[a.severity] - SEV_RANK[b.severity]);
+  const count = (s) => fs.filter((f) => f.status === s).length;
+  const [vText, vClass] = verdict(fs);
+  const summary = state.summary || {};
+  const trace = result.trace.map((t) =>
+    `<li><b>${esc(t.agent)}</b> <span class="muted">on pod ${esc(t.consumer)}</span>${t.note ? " · " + esc(t.note) : ""}</li>`).join("");
+  $("results").innerHTML = `
+  <div class="panel">
+    <div class="company">
+      <div><h2>${esc(c.name)} (${esc(c.ticker)})</h2>
+        <div class="muted">Form ${esc(c.form)} · fiscal year ${esc(c.fiscal_year)} · period ended ${esc(c.period_end)} · filed ${esc(c.filed)}</div>
+        <div class="muted">${c.sic_description ? "Industry: " + esc(c.sic_description) + " · " : ""}
+          <a href="${esc(c.source_url)}" target="_blank" rel="noopener">View filing on SEC.gov</a></div></div>
+    </div>
+    <div class="verdict ${vClass}">Overall: ${esc(vText)}</div>
+    <div class="stats">
+      <div class="stat s-pass"><b>${count("pass")}</b><span>passed</span></div>
+      <div class="stat s-warn"><b>${count("warn")}</b><span>warnings</span></div>
+      <div class="stat s-fail"><b>${count("fail")}</b><span>failed</span></div>
+      <div class="stat s-not_applicable"><b>${count("not_applicable")}</b><span>not applicable</span></div>
+    </div>
+    <div class="actions">
+      <button id="dl">Download full report (.md)</button>
+      <a href="/audits/${esc(result.job_id)}/report" target="_blank" rel="noopener"><button type="button">Open report text</button></a>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Checks (${fs.length})</h2>
+    <div class="muted">Click a check to see the numbers used and the SEC rule behind it.</div>
+    ${fs.map(renderFinding).join("")}
+  </div>
+  <div class="panel">
+    <h2>How the agents handled it</h2>
+    <ol class="trace">${trace}</ol>
+    <div class="muted">Report written by: ${esc(summary.drafter || "")}${summary.refinement_rounds ? " · citation refinement rounds: " + esc(summary.refinement_rounds) : ""}</div>
+  </div>`;
+  $("results").classList.remove("hidden");
+  $("dl").onclick = async () => {
+    const md = await (await fetch(`/audits/${result.job_id}/report`)).text();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([md], {type: "text/markdown"}));
+    a.download = `${c.ticker}-FY${c.fiscal_year}-audit.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+}
+
+async function poll(jobId) {
+  try {
+    const res = await fetch(`/audits/${jobId}`);
+    const state = await res.json();
+    setStage(state.status, state.error);
+    if (state.status === "completed") {
+      const result = await (await fetch(`/audits/${jobId}/result`)).json();
+      renderResult(result, state);
+      return done();
+    }
+    if (state.status === "failed") return done();
+  } catch (e) {
+    $("stage-note").textContent = "Lost contact with the gateway, retrying…";
+  }
+  pollTimer = setTimeout(() => poll(jobId), 500);
+}
+
+function done() { $("run").disabled = false; $("run").textContent = "Run audit"; }
+
+async function start(ticker, fy) {
+  clearTimeout(pollTimer);
+  $("error").textContent = "";
+  $("results").classList.add("hidden");
+  const body = {ticker: ticker.trim().toUpperCase()};
+  if (fy) body.fiscal_year = Number(fy);
+  $("run").disabled = true; $("run").textContent = "Running…";
+  try {
+    const res = await fetch("/audits", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = Array.isArray(data.detail) ? data.detail.map((d) => d.msg).join("; ") : data.detail;
+      $("error").textContent = "Invalid input: " + msg;
+      return done();
+    }
+    $("progress").classList.remove("hidden");
+    setStage("queued");
+    history.replaceState(null, "", "?job=" + encodeURIComponent(data.job_id));
+    poll(data.job_id);
+  } catch (e) {
+    $("error").textContent = "Could not reach the gateway: " + e.message;
+    done();
+  }
+}
+
+async function refreshSystem() {
+  try {
+    const q = await (await fetch("/queues")).json();
+    const name = {"audit:crosscheck": "Cross-check agent", "audit:regulation": "Regulation agent",
+                  "audit:report": "Report agent", "audit:dlq": "Failed messages (DLQ)"};
+    $("system").innerHTML = Object.entries(q).map(([k, v]) => k === "audit:dlq"
+      ? `<div><b>${name[k]}</b><br>${v.length} total</div>`
+      : `<div><b>${esc(name[k] || k)}</b><br>${v.consumers} worker(s) · ${v.lag} waiting · ${v.pending} in progress</div>`).join("");
+  } catch (e) {
+    $("system").innerHTML = `<div class="muted">Gateway unreachable</div>`;
+  }
+}
+
+$("form").addEventListener("submit", (e) => { e.preventDefault(); start($("ticker").value, $("fy").value); });
+["AAPL", "MSFT", "NVDA", "JPM", "TSLA", "BA", "PFE", "CVX"].forEach((t) => {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "chip"; b.textContent = t;
+  b.onclick = () => { $("ticker").value = t; $("fy").value = ""; start(t, ""); };
+  $("chips").appendChild(b);
+});
+refreshSystem();
+setInterval(refreshSystem, 3000);
+// Shareable links: /?ticker=AAPL&fy=2023 starts that audit on load; /?job=<id> reopens a finished one.
+const params = new URLSearchParams(location.search);
+if (params.get("job")) {
+  $("progress").classList.remove("hidden");
+  $("run").disabled = true;
+  poll(params.get("job"));
+} else if (params.get("ticker")) {
+  $("ticker").value = params.get("ticker");
+  $("fy").value = params.get("fy") || "";
+  start($("ticker").value, $("fy").value);
+}
+</script>
+</body>
+</html>

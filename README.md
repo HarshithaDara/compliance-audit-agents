@@ -10,9 +10,9 @@ All of the data is real and fetched live:
 - **Regulations:** 248 sections of Title 17 CFR scraped from the [eCFR API](https://www.ecfr.gov/developers/documentation/api/v1)
   (Regulation S-X, Regulation S-K, Regulation G, Regulation S-T Rule 405, and Exchange Act reporting rules)
 
-```
-POST /audits {"ticker": "BA"}   ->   report: 11 checks, 2 observations, each tied to the governing CFR section
-```
+Open **http://localhost:8080** (or :8000 locally): type a ticker, watch the three agents hand the job to each other live, then explore every check with its numbers and the SEC rule behind it. Links like `/?ticker=AAPL` start an audit, and `/?job=<id>` reopens a finished one.
+
+![Web UI: Boeing FY2025 audit](docs/ui-screenshot.png)
 
 ## Architecture
 
@@ -33,7 +33,7 @@ flowchart LR
 | **crosscheck** | Pulls the company's XBRL facts from EDGAR and runs 11 accounting checks: balance-sheet identity, liabilities + equity components, gross profit, diluted EPS (net of preferred dividends), cash-flow reconciliation (incl. FX), year-over-year swings (Item 303 MD&A triggers), restatement detection against the prior-year 10-K (stock splits are recognised and excluded), filing deadline by filer category (from public float), liquidity / going-concern indicators, and conflicting XBRL facts | Picks the right filing and period from raw XBRL, handles tag variants, keeps a Redis cache, throttles under SEC's rate limit |
 | **regulation** | Attaches the governing regulations to every finding | BM25 + `bge-small-en-v1.5` dense embeddings fused with reciprocal-rank fusion; resolves explicit references ("Item 303", "Rule 12b-25"); **industry scoping**: bank/insurance/oil & gas/mining articles are used only for companies in that industry (from their SEC SIC code), and deal-specific rules (roll-ups, SPACs, ABS) are excluded |
 | **reporter** | Drafts the audit report | Claude (`claude-opus-5-5`) writes the narrative; a **grounding validator** rejects any draft that cites a CFR section the regulation agent didn't retrieve or states a dollar figure that isn't in the evidence, and falls back to a deterministic template. If a flagged finding has weak citations, the reporter **sends it back to the regulation agent** for a refinement round |
-| **gateway** | HTTP API: submit audits, poll status, fetch reports, inspect queue depth | FastAPI, input validation |
+| **gateway** | Web UI and HTTP API: submit audits, watch the agents live, browse results, inspect queue depth | FastAPI, input validation, dependency-free single-page UI |
 
 ### Messaging guarantees (Redis Streams)
 
@@ -94,7 +94,7 @@ curl localhost:8000/queues                     # per-agent lag / pending / consu
 ## Testing
 
 ```bash
-python -m pytest -q                                      # 85 unit + integration tests
+python -m pytest -q                                      # 87 unit + integration tests
 python scripts/run_e2e.py --repeats 3                    # live end-to-end regression
 python scripts/resilience_test.py --stop ... --start ... # agent-outage drill
 ```

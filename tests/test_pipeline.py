@@ -193,6 +193,29 @@ def test_liveness_does_not_depend_on_redis(env, monkeypatch):
     assert env.client.get("/healthz").status_code == 503
 
 
+def test_queues_count_only_live_consumers(env, monkeypatch):
+    """Regression: after scaling crosscheck 4 -> 2, /queues still reported 4 workers because Redis
+    keeps consumers of deleted pods registered. Live workers re-poll every few seconds."""
+    real = env.r.xinfo_consumers
+
+    def consumers(stream, group):
+        if stream == config.STREAM_CROSSCHECK:
+            return [{"name": "live-a", "idle": 900}, {"name": "live-b", "idle": 4000},
+                    {"name": "gone-c", "idle": 600000}, {"name": "gone-d", "idle": 90000}]
+        return real(stream, group)
+    monkeypatch.setattr(env.r, "xinfo_consumers", consumers)
+    assert env.client.get("/queues").json()[config.STREAM_CROSSCHECK]["consumers"] == 2
+
+
+def test_web_ui_is_served_at_root(env):
+    res = env.client.get("/")
+    assert res.status_code == 200 and res.headers["content-type"].startswith("text/html")
+    assert "<title>Compliance Audit Agents</title>" in res.text
+    # the page only calls endpoints that exist
+    for path in ("/audits", "/queues"):
+        assert f'"{path}' in res.text or f"`{path}" in res.text
+
+
 def test_gateway_validates_input(env):
     assert env.client.post("/audits", json={"ticker": "AAPL; DROP"}).status_code == 422
     assert env.client.post("/audits", json={"ticker": "AAPL", "fiscal_year": 1990}).status_code == 422
