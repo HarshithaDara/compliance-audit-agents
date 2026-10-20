@@ -1,0 +1,33 @@
+# Local container run: docker compose up --build   then   python scripts/run_e2e.py
+x-agent: &agent
+  restart: unless-stopped
+  depends_on: [redis]
+  environment:
+    REDIS_URL: redis://redis:6379/0
+    SEC_USER_AGENT: ${SEC_USER_AGENT:-ComplianceAuditAgents research-project contact@example.com}
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    LLM_MODE: ${LLM_MODE:-auto}
+
+services:
+  redis:
+    image: redis:8.2-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["6379:6379"]
+  gateway:
+    <<: *agent
+    build: {context: ., dockerfile: agents/gateway/Dockerfile}
+    image: audit-gateway:local
+    ports: ["8000:8000"]
+  crosscheck:
+    <<: *agent
+    build: {context: ., dockerfile: agents/crosscheck/Dockerfile}
+    image: audit-crosscheck:local
+    deploy: {replicas: 2}
+  regulation:
+    <<: *agent
+    build: {context: ., dockerfile: agents/regulation/Dockerfile}
+    image: audit-regulation:local
+  reporter:
+    <<: *agent
+    build: {context: ., dockerfile: agents/reporter/Dockerfile}
+    image: audit-reporter:local

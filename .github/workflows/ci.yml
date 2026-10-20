@@ -1,0 +1,68 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements/*.txt
+      - run: pip install -r requirements/dev.txt
+      - name: Build the regulation index from the scraped eCFR corpus
+        run: python -m agents.regulation.retriever
+      - run: python -m pytest -q
+
+  kubernetes-e2e:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    env:
+      SEC_USER_AGENT: "ComplianceAuditAgents CI github-actions contact@example.com"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build one image per agent role
+        run: |
+          for a in gateway crosscheck regulation reporter; do
+            docker build -f agents/$a/Dockerfile -t audit-$a:latest .
+          done
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: compliance-audit
+          config: k8s/kind-config.yaml
+      - name: Load images and deploy
+        run: |
+          for a in gateway crosscheck regulation reporter; do
+            kind load docker-image audit-$a:latest --name compliance-audit
+          done
+          kubectl apply -k k8s
+          kubectl -n compliance-audit patch configmap audit-config -p "{\"data\":{\"SEC_USER_AGENT\":\"$SEC_USER_AGENT\"}}"
+          kubectl -n compliance-audit rollout restart deploy
+          kubectl -n compliance-audit rollout status statefulset/redis --timeout=180s
+          for a in gateway crosscheck regulation reporter; do
+            kubectl -n compliance-audit rollout status deploy/$a --timeout=300s
+          done
+          kubectl -n compliance-audit get pods -o wide
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests==2.34.2 pydantic==2.14.1
+      - name: End-to-end audits against the cluster (live SEC data)
+        run: python scripts/run_e2e.py --url http://localhost:8080 --repeats 2 --out e2e-results AAPL MSFT JPM BA PFE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-results
+          path: e2e-results/
+      - name: Agent logs
+        if: failure()
+        run: |
+          for a in gateway crosscheck regulation reporter; do
+            echo "=== $a"; kubectl -n compliance-audit logs deploy/$a --tail=100 || true
+          done

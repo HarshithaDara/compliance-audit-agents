@@ -1,0 +1,9 @@
+.venv
+.git
+.github
+logs
+e2e-results
+data/index
+tests
+**/__pycache__
+*.pyc

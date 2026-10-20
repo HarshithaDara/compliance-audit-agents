@@ -1,0 +1,32 @@
+# Replicas of an agent role join the same Redis consumer group, so
+# `kubectl scale deploy/crosscheck --replicas=N` spreads work with no code changes.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crosscheck
+  labels: {app: crosscheck}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: crosscheck}
+  template:
+    metadata:
+      labels: {app: crosscheck, app.kubernetes.io/component: agent}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: crosscheck
+          image: audit-crosscheck:latest
+          imagePullPolicy: IfNotPresent
+          envFrom: [{configMapRef: {name: audit-config}}]
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import os,sys,time; sys.exit(time.time()-os.path.getmtime('/tmp/agent-healthy')>60)"]
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]

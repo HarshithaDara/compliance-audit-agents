@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: audit-config
+data:
+  REDIS_URL: redis://redis:6379/0
+  # SEC requires automated clients to identify themselves: "<name or org> <contact email>".
+  SEC_USER_AGENT: ComplianceAuditAgents research-project contact@example.com
+  LLM_MODE: auto            # auto | template | claude
+  ANTHROPIC_MODEL: claude-opus-5-5
+  MAX_DELIVERIES: "3"
+  CLAIM_IDLE_MS: "60000"
+  LOG_LEVEL: INFO
+# The reporter reads ANTHROPIC_API_KEY from the optional secret "anthropic":
+#   kubectl -n compliance-audit create secret generic anthropic --from-literal=api-key=sk-ant-...
+# Without it, reports are drafted by the deterministic template drafter.
