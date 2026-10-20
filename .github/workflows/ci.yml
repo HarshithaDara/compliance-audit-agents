@@ -7,10 +7,10 @@ on:
 
 jobs:
   unit-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -22,11 +22,11 @@ jobs:
 
   kubernetes-e2e:
     needs: unit-tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       SEC_USER_AGENT: "ComplianceAuditAgents CI github-actions contact@example.com"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build one image per agent role
         run: |
           for a in gateway crosscheck regulation reporter; do
@@ -49,7 +49,7 @@ jobs:
             kubectl -n compliance-audit rollout status deploy/$a --timeout=300s
           done
           kubectl -n compliance-audit get pods -o wide
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install requests==2.34.2 pydantic==2.14.1 redis==8.1.0
@@ -67,7 +67,7 @@ jobs:
           python scripts/sec_snapshot.py seed --redis redis://127.0.0.1:6379/0
       - name: End-to-end audits against the cluster
         run: python scripts/run_e2e.py --url http://localhost:8080 --repeats 2 --out e2e-results AAPL MSFT JPM BA PFE
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: e2e-results
